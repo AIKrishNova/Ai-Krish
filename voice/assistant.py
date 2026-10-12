@@ -1,4 +1,4 @@
-import json, queue, re, subprocess, threading, time, urllib.request, urllib.error
+import json, os, queue, re, subprocess, sys, threading, time, urllib.request, urllib.error
 from collections import deque
 import numpy as np
 import sounddevice as sd
@@ -14,12 +14,27 @@ STYLE = ("You are NEXUS AI, a personal voice assistant. If asked your name or wh
 speech_q = queue.Queue()
 current = {"proc": None}
 
+def tts_proc(text):
+    if sys.platform == "darwin":
+        return subprocess.Popen(["say", "-r", "185", text])
+    if sys.platform.startswith("win"):
+        ps = ("Add-Type -AssemblyName System.Speech;"
+              "(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak($env:NEXUS_TEXT)")
+        return subprocess.Popen(["powershell", "-NoProfile", "-Command", ps],
+                                env={**os.environ, "NEXUS_TEXT": text})
+    return subprocess.Popen(["espeak-ng", "-s", "185", "--", text])
+
+def beep():
+    t = np.linspace(0, 0.15, int(SR * 0.15), False)
+    sd.play((0.3 * np.sin(2 * np.pi * 880 * t)).astype("float32"), SR)
+    sd.wait()
+
 def speaker():
     while True:
         text = speech_q.get()
         if text is None:
             break
-        p = subprocess.Popen(["say", "-r", "185", text])
+        p = tts_proc(text)
         current["proc"] = p
         p.wait()
         speech_q.task_done()
@@ -47,7 +62,7 @@ def stop_speaking():
         p.terminate()
 
 def record():
-    subprocess.run(["afplay", "/System/Library/Sounds/Ping.aiff"])
+    beep()
     print("Listening...")
     pre = deque(maxlen=4)
     frames, started, silent, calib = [], False, 0, []
