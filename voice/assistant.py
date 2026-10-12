@@ -9,7 +9,7 @@ SR, BLOCK = 16000, 1600
 STREAM = sd.InputStream(samplerate=SR, channels=1, dtype="float32", blocksize=BLOCK)
 STREAM.start()
 STYLE = ("You are NEXUS AI, a personal voice assistant. If asked your name or who you are, say you are Nexus AI. Answer for speech: at most 3 short sentences, plain words, "
-         "no markdown, no lists.\n\nQuestion: ")
+         "no markdown, no lists. You run as a voice script on the user's computer: you have no phone app, no wake word and no memory between questions, so never claim abilities you lack.\n\nQuestion: ")
 
 speech_q = queue.Queue()
 current = {"proc": None}
@@ -170,7 +170,7 @@ try:
         if audio is None:
             print("I didn't hear anything.\n")
             continue
-        segs, _ = model.transcribe(audio, language="en", beam_size=1, vad_filter=True)
+        segs, _ = model.transcribe(audio, language="en", initial_prompt="Nexus AI", beam_size=1, vad_filter=True)
         text = " ".join(s.text.strip() for s in segs).strip()
         if not text:
             print("I didn't catch that.\n")
