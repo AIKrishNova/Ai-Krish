@@ -39,7 +39,6 @@ Voice detection uses a fixed volume threshold (`thr` in `record()`), tuned for a
 
 - `backend/` FastAPI service
 - `voice/` voice assistant
-- `frontend/` web UI
 - `docs/` documentation
 
 ## Contributing
