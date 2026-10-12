@@ -6,6 +6,8 @@ from faster_whisper import WhisperModel
 
 API = "http://127.0.0.1:8000/api/chat/stream"
 SR, BLOCK = 16000, 1600
+STREAM = sd.InputStream(samplerate=SR, channels=1, dtype="float32", blocksize=BLOCK)
+STREAM.start()
 STYLE = ("You are NEXUS AI, a personal voice assistant. If asked your name or who you are, say you are Nexus AI. Answer for speech: at most 3 short sentences, plain words, "
          "no markdown, no lists.\n\nQuestion: ")
 
@@ -49,33 +51,29 @@ def record():
     print("Listening...")
     pre = deque(maxlen=4)
     frames, started, silent, calib = [], False, 0, []
-    thr, t0 = 0.0025, time.time()
-    with sd.InputStream(samplerate=SR, channels=1, dtype="float32", blocksize=BLOCK) as s:
-        while True:
-            data, _ = s.read(BLOCK)
-            level = float(np.sqrt(np.mean(data ** 2)))
-            if len(calib) < 4:
-                calib.append(level)
-                if len(calib) == 4:
-                    thr = max(0.0025, float(min(calib)) * 3)
-                pre.append(data)
-                continue
-            if level > thr:
-                if not started:
-                    frames.extend(pre)
-                started, silent = True, 0
-                frames.append(data)
-            elif started:
-                frames.append(data)
-                silent += 1
-                if silent >= 10:
-                    break
-            else:
-                pre.append(data)
-                if time.time() - t0 > 8:
-                    return None
-            if time.time() - t0 > 25:
+    s = STREAM
+    time.sleep(0.3)
+    if s.read_available: s.read(s.read_available)
+    thr, t0 = 0.008, time.time()
+    while True:
+        data, _ = s.read(BLOCK)
+        level = float(np.sqrt(np.mean(data ** 2)))
+        if level > thr:
+            if not started:
+                frames.extend(pre)
+            started, silent = True, 0
+            frames.append(data)
+        elif started:
+            frames.append(data)
+            silent += 1
+            if silent >= 10:
                 break
+        else:
+            pre.append(data)
+            if time.time() - t0 > 8:
+                return None
+        if time.time() - t0 > 25:
+            break
     if not frames:
         return None
     a = np.concatenate(frames).flatten()
