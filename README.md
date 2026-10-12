@@ -13,7 +13,7 @@ An open-source personal AI assistant: a FastAPI backend that streams answers fro
 
 ## Requirements
 
-- Python 3.10 or newer
+- Python 3.11 or newer
 - An NVIDIA API key (from build.nvidia.com)
 - For the voice assistant: macOS (it uses `afplay`) and a working microphone
 
@@ -21,7 +21,7 @@ An open-source personal AI assistant: a FastAPI backend that streams answers fro
 
 1. `cd backend`
 2. Copy `.env.example` to `.env` and add your own NVIDIA API key.
-3. Install dependencies and run: `python -m uvicorn app.main:app --port 8000`
+3. `pip install .` then `python -m uvicorn app.main:app --port 8000`
 
 ## Quick start: voice assistant
 
@@ -39,7 +39,6 @@ Voice detection uses a fixed volume threshold (`thr` in `record()`), tuned for a
 
 - `backend/` FastAPI service
 - `voice/` voice assistant
-- `docs/` documentation
 
 ## Contributing
 
@@ -48,3 +47,7 @@ Issues and pull requests are welcome. Never commit `.env` files or API keys.
 ## License
 
 MIT. See `LICENSE`.
+
+## Docker (experimental, untested)
+
+`docker compose up --build` should start the backend on port 8000 using `backend/.env`. This path has not been verified yet; reports and fixes are welcome.
