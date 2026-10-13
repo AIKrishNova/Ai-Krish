@@ -51,3 +51,13 @@ MIT. See `LICENSE`.
 ## Docker (experimental, untested)
 
 `docker compose up --build` should start the backend on port 8000 using `backend/.env`. This path has not been verified yet; reports and fixes are welcome.
+
+## Web interface
+
+Start the backend, then open http://127.0.0.1:8000/ui
+
+## Security notes
+
+The backend has no login. Run it only on 127.0.0.1 (the default) and do not expose it to the internet, or anyone could spend your NVIDIA quota.
+
+`backend/app/updater/manager.py` is a command-line tool that shows a diff, makes a backup and asks for approval before changing a file. It is not exposed over the web.
