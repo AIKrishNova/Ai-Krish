@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import AttachmentTray, { type Attachment } from "../components/AttachmentTray";
+import DocumentTray from "../components/DocumentTray";
 import CameraModal from "../components/CameraModal";
 import Markdown from "../components/Markdown";
 import Orb, { OrbStyles, Wave, type OrbMode } from "../components/Orb";
@@ -10,9 +11,11 @@ import Sidebar, { FOCUS, Icon } from "../components/Sidebar";
 import { createClient } from "../lib/supabase/client";
 import { prepareImage } from "../lib/clientImage";
 import { DEFAULT_LIMITS } from "../lib/files/limits";
+import { DOC_ACCEPT, MAX_DOCS, planDocUpload, splitFiles, type DocItem } from "../lib/clientDocs";
+import { readNdjson } from "../lib/ndjson";
 import { pullChats, pullSettings, pushChats, pushSettings, removeAllChats, removeChat, tableMissing } from "../lib/cloud";
 
-type Msg = { role: "user" | "jarvis"; text: string; images?: string[]; notes?: string[]; explanation?: string; fb?: "up" | "down" };
+type Msg = { role: "user" | "jarvis"; text: string; images?: string[]; docs?: string[]; notes?: string[]; explanation?: string; fb?: "up" | "down" };
 type Cloud = "off" | "syncing" | "on" | "setup" | "error";
 type Chat = { id: string; title: string; updated: number; messages: Msg[] };
 
@@ -89,6 +92,8 @@ export default function Home() {
   const [dragOver, setDragOver] = useState(false);
   const [attachNote, setAttachNote] = useState("");
   const [details, setDetails] = useState("");
+  const [docs, setDocs] = useState<DocItem[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
   const [lang, setLang] = useState("en-IN");
   const [voiceName, setVoiceName] = useState("");
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -105,6 +110,7 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captureInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
   const attachRef = useRef<Attachment[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -425,22 +431,65 @@ export default function Home() {
       setInput("");
       return;
     }
+    if (docsLoading) {
+      setAttachNote("Wait for the documents to finish loading, then send.");
+      return;
+    }
+    if (attachments.length > 0 && docs.length > 0) {
+      setAttachNote("Photos and documents cannot be sent together yet. Remove one kind, then send again.");
+      return;
+    }
     if (attachments.length > 0) {
       await sendWithImages(text);
       return;
     }
     stopSpeaking();
-    const next: Msg[] = [...(base ?? messages), { role: "user", text }];
+    const sentDocs = docs;
+    const userMsg: Msg = sentDocs.length ? { role: "user", text, docs: sentDocs.map((d) => d.name) } : { role: "user", text };
+    const next: Msg[] = [...(base ?? messages), userMsg];
     setMessages(next);
     setInput("");
     setBusy(true);
+    setStatusText("");
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+
+    // The reply arrives in pieces. Pieces are shown a few times a second, so the page stays smooth.
+    const st = { full: "", shown: false, timer: null as ReturnType<typeof setTimeout> | null, provider: "", error: null as any, finished: false };
+    const flush = () => {
+      st.timer = null;
+      const t = st.full;
+      if (!st.shown) {
+        st.shown = true;
+        setMessages((m) => [...m, { role: "jarvis", text: t }]);
+      } else {
+        setMessages((m) => {
+          const c = m.slice();
+          const last = c[c.length - 1];
+          if (last && last.role === "jarvis") c[c.length - 1] = { ...last, text: t };
+          return c;
+        });
+      }
+    };
+    const addNote = (note: string) =>
+      setMessages((m) => {
+        const c = m.slice();
+        const last = c[c.length - 1];
+        if (last && last.role === "jarvis") c[c.length - 1] = { ...last, notes: [...(last.notes ?? []), note] };
+        return c;
+      });
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, tutor, memory: memoryText() }),
+        body: JSON.stringify({
+          messages: next,
+          tutor,
+          memory: memoryText(),
+          documents: sentDocs.map((d) => ({ name: d.name, text: d.text })),
+          stream: true,
+        }),
         signal: ctrl.signal,
       });
       if (res.status === 401 || res.status === 403) {
@@ -449,21 +498,58 @@ export default function Home() {
         window.location.assign("/login");
         return;
       }
-      let data: any = {};
-      try { data = await res.json(); } catch {}
-      if (!res.ok || !data.reply) {
-        const why = res.status === 429 ? "Too many requests. Wait a moment and try again." : data.error ?? `Server error ${res.status}.`;
-        setMessages((m) => [...m, { role: "jarvis", text: `Error: ${why}` }]);
+      const ctype = res.headers.get("content-type") || "";
+      if (!res.ok || !res.body || !ctype.includes("ndjson")) {
+        // A plain JSON answer: an error, or a server that does not stream.
+        let data: any = {};
+        try { data = await res.json(); } catch {}
+        if (!res.ok || !data.reply) {
+          const why = res.status === 429 ? "Too many requests. Wait a moment and try again." : data.error ?? `Server error ${res.status}.`;
+          setMessages((m) => [...m, { role: "jarvis", text: `Error: ${why}` }]);
+          setInput((p) => p || text);
+        } else {
+          setMessages((m) => [...m, { role: "jarvis", text: data.reply }]);
+          if (data.provider) setLastProvider(data.provider);
+          speak(data.reply);
+        }
+        return;
+      }
+
+      await readNdjson(res.body, (o) => {
+        if (o.type === "meta" || o.type === "done") {
+          if (typeof o.provider === "string") st.provider = o.provider;
+          if (o.type === "done") st.finished = true;
+        } else if (o.type === "delta" && typeof o.text === "string") {
+          st.full += o.text;
+          if (!st.timer) st.timer = setTimeout(flush, 60);
+        } else if (o.type === "error") {
+          st.error = o;
+        }
+      });
+      if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+      if (st.full) flush();
+      if (st.provider) setLastProvider(st.provider);
+      if (st.error && !st.full) {
+        setMessages((m) => [...m, { role: "jarvis", text: `Error: ${st.error.error ?? "The reply failed."}` }]);
+        setInput((p) => p || text);
+      } else if (st.error) {
+        addNote(`The reply stopped early (${String(st.error.error ?? "connection problem").slice(0, 120)}), so it may be incomplete.`);
+      } else if (!st.full) {
+        setMessages((m) => [...m, { role: "jarvis", text: "Error: The reply was empty. Please try again." }]);
         setInput((p) => p || text);
       } else {
-        setMessages((m) => [...m, { role: "jarvis", text: data.reply }]);
-        if (data.provider) setLastProvider(data.provider);
-        speak(data.reply);
+        speak(st.full);
       }
     } catch (e: any) {
+      if (st.timer) { clearTimeout(st.timer); st.timer = null; }
       const stopped = e?.name === "AbortError";
-      setMessages((m) => [...m, { role: "jarvis", text: stopped ? "Error: Stopped. Your message is back in the box." : "Error: could not reach the server. Check your connection and try again." }]);
-      setInput((p) => p || text);
+      if (st.full) {
+        flush();
+        addNote(stopped ? "Stopped." : "The connection dropped, so this reply may be incomplete.");
+      } else {
+        setMessages((m) => [...m, { role: "jarvis", text: stopped ? "Error: Stopped. Your message is back in the box." : "Error: could not reach the server. Check your connection and try again." }]);
+        setInput((p) => p || text);
+      }
     } finally {
       abortRef.current = null;
       setBusy(false);
@@ -471,7 +557,7 @@ export default function Home() {
   }
 
   const lastUserIdx = (() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "user") return i; return -1; })();
-  const canRetry = !busy && lastUserIdx >= 0 && !messages[lastUserIdx].images && attachments.length === 0;
+  const canRetry = !busy && lastUserIdx >= 0 && !messages[lastUserIdx].images && attachments.length === 0 && (!messages[lastUserIdx].docs || docs.length > 0);
 
   function regenerate() {
     if (!canRetry) return;
@@ -491,7 +577,7 @@ export default function Home() {
     setMessages((ms) => ms.map((m, k) => (k === i ? { ...m, fb: m.fb === v ? undefined : v } : m)));
   }
 
-  async function addFiles(list: FileList | File[]) {
+  async function addImages(list: File[]) {
     const incoming = Array.from(list);
     if (incoming.length === 0) return;
     setAttachNote("");
@@ -510,7 +596,7 @@ export default function Home() {
         problems.push(`${file.name}: skipped, because the photos in one message can total at most ${(DEFAULT_LIMITS.maxTotalBytes / 1_000_000).toFixed(0)} MB.`);
         continue;
       }
-      const item: Attachment = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, file: r.file, previewUrl: URL.createObjectURL(r.file) };
+      const item: Attachment = { id: uid(), file: r.file, previewUrl: URL.createObjectURL(r.file) };
       attachRef.current = [...attachRef.current, item];
       setAttachments(attachRef.current);
     }
@@ -523,6 +609,75 @@ export default function Home() {
     attachRef.current = attachRef.current.filter((a) => a.id !== id);
     setAttachments(attachRef.current);
     if (attachRef.current.length === 0) setDetails("");
+    setAttachNote("");
+  }
+
+  async function addFiles(list: FileList | File[]) {
+    const { images, docs: others } = splitFiles(Array.from(list));
+    await Promise.all([images.length ? addImages(images) : null, others.length ? addDocs(others) : null]);
+  }
+
+  function postDocuments(form: FormData): Promise<{ status: number; body?: any; error?: string }> {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
+      xhr.open("POST", "/api/documents");
+      xhr.timeout = 60000;
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100)); };
+      xhr.onerror = () => resolve({ status: 0, error: "Could not reach the server. Check your connection and try again." });
+      xhr.onabort = () => resolve({ status: 0, error: "Stopped." });
+      xhr.ontimeout = () => resolve({ status: 0, error: "Reading the documents took too long. Try smaller files." });
+      xhr.onload = () => {
+        let body: any = null;
+        try { body = JSON.parse(xhr.responseText); } catch {}
+        resolve({ status: xhr.status, body });
+      };
+      xhr.send(form);
+    });
+  }
+
+  async function addDocs(files: File[]) {
+    setAttachNote("");
+    const plan = planDocUpload(files.map((f) => ({ name: f.name, size: f.size })), docs.length);
+    const problems = [...plan.problems];
+    if (plan.accept.length === 0) {
+      setAttachNote(problems.join(" "));
+      return;
+    }
+    const form = new FormData();
+    plan.accept.forEach((i) => form.append("files", files[i], files[i].name));
+    setDocsLoading(true);
+    setUploadPct(0);
+    const r = await postDocuments(form);
+    xhrRef.current = null;
+    setUploadPct(null);
+    setDocsLoading(false);
+    if (r.status === 401 || r.status === 403) {
+      window.location.assign("/login");
+      return;
+    }
+    if (r.status === 200 && Array.isArray(r.body?.documents)) {
+      const items: DocItem[] = r.body.documents.map((d: any) => ({
+        id: uid(),
+        name: String(d.name),
+        kind: d.kind,
+        chars: Number(d.chars) || 0,
+        pages: typeof d.pages === "number" ? d.pages : undefined,
+        truncated: !!d.truncated,
+        text: String(d.text),
+      }));
+      setDocs((cur) => [...cur, ...items].slice(0, MAX_DOCS));
+      for (const x of r.body.skipped ?? []) problems.push(`${x.file}: ${x.reason}`);
+    } else if (r.status === 429) {
+      problems.push(r.body?.error || "Too many requests. Wait a moment and try again.");
+    } else {
+      problems.push(r.body?.error || r.error || `Could not read the documents (error ${r.status}).`);
+    }
+    if (problems.length) setAttachNote(Array.from(new Set(problems)).join(" "));
+  }
+
+  function removeDoc(id: string) {
+    setDocs((d) => d.filter((x) => x.id !== id));
     setAttachNote("");
   }
 
@@ -808,7 +963,7 @@ export default function Home() {
             className="relative min-h-0 flex-1 overflow-y-auto px-4 sm:px-6">
             {dragOver && (
               <div className="pointer-events-none absolute inset-3 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50/90 text-sm font-semibold text-violet-700">
-                Drop photos here to attach them
+                Drop photos or documents here to attach them
               </div>
             )}
 
@@ -823,7 +978,7 @@ export default function Home() {
                   {firstName && <span className="bg-gradient-to-r from-violet-600 to-blue-500 bg-clip-text text-transparent">{firstName}</span>}
                 </h1>
                 <p className="mt-1 text-2xl text-slate-800 sm:text-3xl">What can we create today?</p>
-                <p className="mt-3 max-w-lg text-sm text-slate-500">Ask a question, speak naturally, or upload a photo for analysis.</p>
+                <p className="mt-3 max-w-lg text-sm text-slate-500">Ask a question, speak naturally, or upload a photo or document for analysis.</p>
                 <div className="mt-7 grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   {CARDS.map((c) => (
                     <button key={c.id} onClick={() => cardAction(c.id)}
@@ -848,6 +1003,11 @@ export default function Home() {
                       {m.images && m.images.length > 0 && (
                         <div className="mt-1.5 flex flex-wrap gap-1">
                           {m.images.map((n, k) => <span key={k} className="max-w-[10rem] truncate rounded-md bg-white/20 px-1.5 py-0.5 text-[11px]">Photo: {n}</span>)}
+                        </div>
+                      )}
+                      {m.docs && m.docs.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {m.docs.map((n, k) => <span key={k} className="max-w-[12rem] truncate rounded-md bg-white/20 px-1.5 py-0.5 text-[11px]">Document: {n}</span>)}
                         </div>
                       )}
                       {m.notes && m.notes.length > 0 && (
@@ -888,7 +1048,7 @@ export default function Home() {
                     </div>
                   </div>
                 ))}
-                {busy && (
+                {busy && messages[messages.length - 1]?.role !== "jarvis" && (
                   <div className="flex items-center gap-3 text-sm text-slate-500" role="status">
                     <Orb mode="thinking" size={30} small /> <span className="animate-pulse">{statusText || "AI Krish is thinking..."}</span>
                   </div>
@@ -902,6 +1062,7 @@ export default function Home() {
           <div className="px-3 pb-3 sm:px-6 sm:pb-4">
             <div className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-2.5 shadow-lg shadow-slate-200/60">
               <AttachmentTray items={attachments} preparing={preparing} progress={uploadPct} onRemove={removeAttachment} />
+              <DocumentTray items={docs} loading={docsLoading} progress={docsLoading ? uploadPct : null} onRemove={removeDoc} />
               {attachments.length > 0 && (
                 <input value={details} onChange={(e) => setDetails(e.target.value.slice(0, 1000))} aria-label="Details about the photo"
                   placeholder="Add details about the photo (optional): where, when, what to check"
@@ -911,15 +1072,17 @@ export default function Home() {
 
               <div className="relative flex items-end gap-1.5">
                 <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files ?? []); e.target.value = ""; }} />
+                <input ref={docInputRef} type="file" accept={DOC_ACCEPT} multiple hidden onChange={(e) => { addFiles(e.target.files ?? []); e.target.value = ""; }} />
                 <input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { addFiles(e.target.files ?? []); e.target.value = ""; }} />
                 {attachMenu && <div className="fixed inset-0 z-20" onClick={() => setAttachMenu(false)} />}
                 {attachMenu && (
-                  <div className="absolute bottom-full left-0 z-30 mb-2 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white text-sm shadow-lg">
+                  <div className="absolute bottom-full left-0 z-30 mb-2 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white text-sm shadow-lg">
                     <button onClick={() => { setAttachMenu(false); fileInputRef.current?.click(); }} className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50">Photo or image</button>
+                    <button onClick={() => { setAttachMenu(false); docInputRef.current?.click(); }} className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50">Document (PDF, Word, CSV, text)</button>
                     <button onClick={openCamera} className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50">Take a photo</button>
                   </div>
                 )}
-                <button onClick={() => setAttachMenu(!attachMenu)} aria-label="Attach a photo" aria-expanded={attachMenu} className={`rounded-full border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50 ${FOCUS}`}><Icon n="clip" /></button>
+                <button onClick={() => setAttachMenu(!attachMenu)} aria-label="Attach a photo or document" aria-expanded={attachMenu} className={`rounded-full border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50 ${FOCUS}`}><Icon n="clip" /></button>
                 <button onClick={openCamera} aria-label="Take a photo" className={`hidden rounded-full border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50 sm:block ${FOCUS}`}><Icon n="camera" /></button>
                 <textarea ref={inputRef} rows={1} value={input} aria-label="Message"
                   onChange={(e) => setInput(e.target.value)}
@@ -928,7 +1091,7 @@ export default function Home() {
                     const imgs = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
                     if (imgs.length) { e.preventDefault(); addFiles(imgs); }
                   }}
-                  placeholder={attachments.length ? "Ask about the photo(s)..." : "Ask anything, Krish..."}
+                  placeholder={attachments.length ? "Ask about the photo(s)..." : docs.length ? "Ask about the document(s)..." : "Ask anything, Krish..."}
                   className="max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-[15px] outline-none placeholder:text-slate-400" />
                 <button onClick={talk} aria-label={awake ? "Stop listening" : "Talk to AI Krish"} aria-pressed={awake}
                   className={`rounded-full p-2.5 ${FOCUS} ${awake ? "animate-pulse bg-cyan-100 text-cyan-700" : "text-slate-600 hover:bg-slate-100"}`}><Icon n="mic" /></button>
@@ -944,7 +1107,7 @@ export default function Home() {
                 <span className="sm:hidden">{thinkSwitch}</span>
                 {toggleBtn(tutor, tutor ? "Tutor: On" : "Tutor", () => setTutor(!tutor), "brain")}
                 <span className="ml-auto hidden text-[11px] text-slate-400 sm:block">
-                  {attachments.length > 0 ? "Photos stay attached for follow-ups. Remove them when done." : "Enter to send, Shift+Enter for a new line. Drag or paste photos."}
+                  {attachments.length > 0 ? "Photos stay attached for follow-ups. Remove them when done." : docs.length > 0 ? "Documents stay attached for follow-ups. Remove them when done." : "Enter to send, Shift+Enter for a new line. Drag or paste photos or documents."}
                 </span>
               </div>
             </div>
@@ -972,6 +1135,7 @@ export default function Home() {
             <div className="mb-2 text-sm font-semibold">Quick Actions</div>
             {[
               { l: "Analyze a photo", i: "image", f: () => fileInputRef.current?.click() },
+              { l: "Analyze a document", i: "clip", f: () => docInputRef.current?.click() },
               { l: "Take a photo", i: "camera", f: openCamera },
               { l: "Research a topic", i: "research", f: () => cardAction("research") },
               { l: "Open memory", i: "memory", f: () => setPanel("memory") },
