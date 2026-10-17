@@ -1,0 +1,164 @@
+import { GoogleGenAI } from "@google/genai";
+import { callOpenAICompat, hasKey, type ChatMsg } from "../../../lib/chatProviders";
+
+const SYSTEM_PROMPT =
+  "You are AI Krish, a calm, helpful personal AI assistant. Keep answers short and clear (1 to 4 sentences) unless asked for more, and always for coding. You are also a patient Python tutor: give a short explanation, a small working example in a code block, then explain it step by step. Reply in the language the user writes in. Do not claim to have access to any platform, account or data unless it was provided in this conversation.";
+
+const KNOWN = ["gemini", "groq", "cerebras", "openrouter", "mistral", "freellmapi"];
+const TIMEOUT_MS = Number(process.env.PROVIDER_TIMEOUT_MS) || 15000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function friendly(e: unknown) {
+  const raw = e instanceof Error ? e.message : String(e);
+  try {
+    const j = JSON.parse(raw);
+    return j?.error?.message ?? raw;
+  } catch {
+    return raw;
+  }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new Error(`${label}: timed out after ${ms / 1000}s`)),
+      ms
+    );
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
+function getOrder(): string[] {
+  const raw = process.env.PROVIDER_ORDER;
+  const list = (raw ? raw.split(",") : [])
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => KNOWN.includes(s));
+  return list.length ? Array.from(new Set(list)) : KNOWN;
+}
+
+function isConfigured(name: string) {
+  if (name === "freellmapi") return !!process.env.FREELLMAPI_KEY;
+  return name === "gemini" ? !!process.env.GEMINI_API_KEY : hasKey(name);
+}
+
+async function callGemini(history: ChatMsg[]): Promise<string> {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const contents = history.map((m) => ({
+    role: m.role === "user" ? "user" : "model",
+    parts: [{ text: m.text }],
+  }));
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const result = await withTimeout(
+        ai.models.generateContent({
+          model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+          contents,
+          config: { systemInstruction: SYSTEM_PROMPT },
+        }),
+        TIMEOUT_MS,
+        "gemini"
+      );
+      if (!result.text) throw new Error("gemini: empty reply");
+      return result.text;
+    } catch (e) {
+      lastError = e;
+      const raw = e instanceof Error ? e.message : String(e);
+      const retryable = raw.includes("503") || raw.includes("UNAVAILABLE");
+      if (!retryable || attempt === 1) break;
+      await sleep(1000);
+    }
+  }
+  throw lastError;
+}
+
+async function callFreeLLMAPI(history: ChatMsg[]): Promise<string> {
+  const base = process.env.FREELLMAPI_URL || "http://127.0.0.1:3001/v1";
+  const res = await withTimeout(
+    fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.FREELLMAPI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "auto",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          ...history.map((m) => ({
+            role: m.role === "user" ? "user" : "assistant",
+            content: m.text,
+          })),
+        ],
+      }),
+    }),
+    TIMEOUT_MS * 2,
+    "freellmapi"
+  );
+  if (!res.ok) throw new Error(`freellmapi: HTTP ${res.status}`);
+  const j = await res.json();
+  const text = j?.choices?.[0]?.message?.content;
+  if (!text) throw new Error("freellmapi: empty reply");
+  return text;
+}
+
+export async function POST(req: Request) {
+  const need = process.env.APP_PASSCODE;
+  if (need && req.headers.get("x-krish-pass") !== need) {
+    return Response.json({ error: "locked" }, { status: 401 });
+  }
+  try {
+    const body = await req.json();
+    const all = (body?.messages ?? []) as ChatMsg[];
+    const filtered = all
+      .filter((m) => typeof m?.text === "string" && !m.text.startsWith("Error:"))
+      .slice(-20);
+    const firstUser = filtered.findIndex((m) => m.role === "user");
+    const history = filtered.slice(firstUser === -1 ? 0 : firstUser);
+    if (history.length === 0) {
+      return Response.json({ error: "No messages to answer." }, { status: 400 });
+    }
+
+    const errors: string[] = [];
+    for (const name of getOrder()) {
+      if (!isConfigured(name)) continue;
+      try {
+        const reply =
+          name === "gemini"
+            ? await callGemini(history)
+            : name === "freellmapi"
+            ? await callFreeLLMAPI(history)
+            : (await callOpenAICompat(name, SYSTEM_PROMPT, history, TIMEOUT_MS)).reply;
+        return Response.json({ reply, provider: name });
+      } catch (e) {
+        errors.push(`${name}: ${friendly(e).slice(0, 150)}`);
+      }
+    }
+
+    if (errors.length === 0) {
+      return Response.json(
+        {
+          error:
+            "No AI provider key found. Add GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY or MISTRAL_API_KEY to .env.local, then restart npm run dev.",
+        },
+        { status: 500 }
+      );
+    }
+    return Response.json(
+      { error: "All providers failed. " + errors.join(" | ") },
+      { status: 500 }
+    );
+  } catch (e) {
+    return Response.json({ error: friendly(e) }, { status: 500 });
+  }
+}

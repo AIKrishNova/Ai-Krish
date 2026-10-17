@@ -1,69 +1,1091 @@
-import Image from "next/image";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client";
+
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import AttachmentTray, { type Attachment } from "../components/AttachmentTray";
+import CameraModal from "../components/CameraModal";
+import Markdown from "../components/Markdown";
+import Orb, { OrbStyles, Wave, type OrbMode } from "../components/Orb";
+import Sidebar, { FOCUS, Icon } from "../components/Sidebar";
+import { createClient } from "../lib/supabase/client";
+import { prepareImage } from "../lib/clientImage";
+import { DEFAULT_LIMITS } from "../lib/files/limits";
+import { pullChats, pullSettings, pushChats, pushSettings, removeAllChats, removeChat, tableMissing } from "../lib/cloud";
+
+type Msg = { role: "user" | "jarvis"; text: string; images?: string[]; notes?: string[]; explanation?: string; fb?: "up" | "down" };
+type Cloud = "off" | "syncing" | "on" | "setup" | "error";
+type Chat = { id: string; title: string; updated: number; messages: Msg[] };
+
+const COURSE = [
+  "1. Networking basics (TCP/IP, DNS, HTTP)",
+  "2. Linux command line",
+  "3. Security fundamentals, ethics and the law",
+  "4. Build a safe home lab (VirtualBox, Kali, practice VMs)",
+  "5. Reconnaissance and scanning (Nmap) in your lab",
+  "6. Web security and the OWASP Top 10",
+  "7. Passwords and authentication attacks (in your lab)",
+  "8. Exploitation basics on legal practice targets",
+  "9. Privilege escalation basics",
+  "10. Reporting and defense",
+  "11. CTF practice (picoCTF, TryHackMe, OverTheWire)",
+];
+
+// Speech engines often hear "Krish" as Chris / Krishna, so accept those too.
+const WAKE = /\b(?:hey|hay|hi|hello|ok|okay|a|ay|hei)[\s,]+(?:krish\w*|kris\w*|chris\w*|christ\w*|krush|crush|grish\w*|cris\w*|kreesh\w*|krisha)\b[\s,.!?]*/i;
+
+const LABEL: Record<OrbMode, string> = {
+  idle: 'Ready. Tap Talk or turn on "Hey Krish"',
+  standby: 'Waiting for "Hey Krish"',
+  listening: "Listening...",
+  thinking: "Thinking...",
+  speaking: "Speaking...",
+};
+
+const LANGS = [
+  { code: "en-IN", label: "English (India)" },
+  { code: "ta-IN", label: "Tamil" },
+];
+
+const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+const newChat = (): Chat => ({ id: uid(), title: "New chat", updated: Date.now(), messages: [] });
+const titleOf = (m: Msg[]) => {
+  const t = m.find((x) => x.role === "user")?.text.replace(/\s+/g, " ").trim();
+  return t ? (t.length > 42 ? t.slice(0, 42) + "..." : t) : "";
+};
+
+const CARDS = [
+  { id: "ask", icon: "chat", title: "Ask AI", text: "Get answers, solve problems, and explore new ideas." },
+  { id: "photo", icon: "image", title: "Analyze a Photo", text: "Upload or capture a photo and ask about it." },
+  { id: "research", icon: "research", title: "Research a Topic", text: "Find information and compare options." },
+  { id: "learn", icon: "brain", title: "Learn Something", text: "Turn on Tutor and study step by step." },
+] as const;
 
 export default function Home() {
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeId, setActiveId] = useState("");
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [micOpen, setMicOpen] = useState(false);
+  const [wakeOn, setWakeOn] = useState(false);
+  const [awake, setAwake] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(true);
+  const [lastProvider, setLastProvider] = useState<string | null>(null);
+  const [micError, setMicError] = useState("");
+  const [notes, setNotes] = useState<string[]>([]);
+  const [done, setDone] = useState<number[]>([]);
+  const [tutor, setTutor] = useState(false);
+  const [panel, setPanel] = useState<null | "memory" | "settings">(null);
+  const [hydrated, setHydrated] = useState(false);
+  const [heard, setHeard] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [preparing, setPreparing] = useState(0);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [statusText, setStatusText] = useState("");
+  const [think, setThink] = useState(false);
+  const [attachMenu, setAttachMenu] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [attachNote, setAttachNote] = useState("");
+  const [details, setDetails] = useState("");
+  const [lang, setLang] = useState("en-IN");
+  const [voiceName, setVoiceName] = useState("");
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileNav, setMobileNav] = useState(false);
+  const [query, setQuery] = useState("");
+  const [user, setUser] = useState({ name: "", email: "" });
+  const [speakingIdx, setSpeakingIdx] = useState<number | null>(null);
+  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
+  const [instructions, setInstructions] = useState("");
+  const [cloud, setCloud] = useState<Cloud>("off");
+  const [cloudReady, setCloudReady] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const captureInputRef = useRef<HTMLInputElement>(null);
+  const attachRef = useRef<Attachment[]>([]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  const recRef = useRef<any>(null);
+  const runningRef = useRef(false);
+  const wakeRef = useRef(false);
+  const oneShotRef = useRef(false);
+  const awakeRef = useRef(false);
+  const awakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speakingRef = useRef(false);
+  const speakEndRef = useRef(0);
+  const utterRef = useRef<any>(null);
+  const watchRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const langRef = useRef(lang);
+  const chatsRef = useRef<Chat[]>([]);
+  const pushedRef = useRef<Record<string, number>>({});
+  const syncStartedRef = useRef(false);
+  const voiceNameRef = useRef(voiceName);
+
+  const started = messages.some((m) => m.role === "user");
+  const firstName = user.name.trim().split(/\s+/)[0] || "";
+
+  // ---- load saved state ----
+  useEffect(() => {
+    try {
+      let list: Chat[] = [];
+      const raw = localStorage.getItem("krish-chats");
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) list = arr.filter((c) => c && typeof c.id === "string" && Array.isArray(c.messages));
+      }
+      if (list.length === 0) {
+        // Bring over the single chat saved by the older version.
+        const old = localStorage.getItem("krish-messages");
+        const msgs: Msg[] = old ? JSON.parse(old) : [];
+        const first = newChat();
+        if (Array.isArray(msgs) && msgs.some((m) => m.role === "user")) {
+          first.messages = msgs;
+          first.title = titleOf(msgs) || "Earlier chat";
+        }
+        list = [first];
+      }
+      const fresh = newChat();
+      const last = list[0];
+      const reuse = last && last.messages.length === 0;
+      const next = reuse ? list : [fresh, ...list];
+      const active = reuse ? last : fresh;
+      setChats(next);
+      setActiveId(active.id);
+      setMessages(active.messages);
+      const n = localStorage.getItem("krish-notes");
+      if (n) setNotes(JSON.parse(n));
+      const d = localStorage.getItem("krish-done");
+      if (d) setDone(JSON.parse(d));
+      setTutor(localStorage.getItem("krish-tutor") === "1");
+      setThink(localStorage.getItem("krish-think") === "1");
+      setCollapsed(localStorage.getItem("krish-collapsed") === "1");
+      setInstructions(localStorage.getItem("krish-instructions") || "");
+      setLang(localStorage.getItem("krish-lang") || "en-IN");
+      setVoiceName(localStorage.getItem("krish-voice") || "");
+      if (localStorage.getItem("krish-voiceon") === "0") setVoiceOn(false);
+    } catch {}
+    setHydrated(true);
+  }, []);
+
+  // ---- signed-in user (for the greeting and profile) ----
+  useEffect(() => {
+    let alive = true;
+    try {
+      createClient().auth.getUser().then(({ data }) => {
+        const u = data?.user;
+        if (alive && u) setUser({ name: String(u.user_metadata?.full_name ?? ""), email: u.email ?? "" });
+      }).catch(() => {});
+    } catch {}
+    return () => { alive = false; };
+  }, []);
+
+  // ---- keep the active chat in the list ----
+  useEffect(() => {
+    if (!hydrated || !activeId) return;
+    setChats((cs) => cs.map((c) => {
+      if (c.id !== activeId || c.messages === messages) return c;
+      const t = titleOf(messages);
+      // Follow the first message while the title is still the automatic one; keep it once the user renamed it.
+      const auto = c.title === "New chat" || c.title === titleOf(c.messages);
+      return { ...c, messages, title: auto ? t || "New chat" : c.title, updated: c.messages.length !== messages.length ? Date.now() : c.updated };
+    }));
+  }, [messages, activeId, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      const keep = chats.filter((c) => c.messages.length > 0 || c.id === activeId).slice(0, 40).map((c) => ({ ...c, messages: c.messages.slice(-60) }));
+      localStorage.setItem("krish-chats", JSON.stringify(keep));
+      localStorage.setItem("krish-notes", JSON.stringify(notes));
+      localStorage.setItem("krish-done", JSON.stringify(done));
+      localStorage.setItem("krish-tutor", tutor ? "1" : "0");
+      localStorage.setItem("krish-think", think ? "1" : "0");
+      localStorage.setItem("krish-collapsed", collapsed ? "1" : "0");
+      localStorage.setItem("krish-instructions", instructions);
+      localStorage.setItem("krish-lang", lang);
+      localStorage.setItem("krish-voice", voiceName);
+      localStorage.setItem("krish-voiceon", voiceOn ? "1" : "0");
+    } catch {}
+  }, [chats, activeId, notes, done, tutor, think, collapsed, lang, voiceName, voiceOn, instructions, hydrated]);
+
+  useEffect(() => { langRef.current = lang; }, [lang]);
+  useEffect(() => { voiceNameRef.current = voiceName; }, [voiceName]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [messages, busy]);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  }, [input]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const load = () => setVoices(window.speechSynthesis.getVoices());
+    load();
+    window.speechSynthesis.addEventListener?.("voiceschanged", load);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", load);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      wakeRef.current = false;
+      try { recRef.current?.stop(); } catch {}
+      if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    };
+  }, []);
+
+  useEffect(() => { attachRef.current = attachments; }, [attachments]);
+  useEffect(() => () => attachRef.current.forEach((a) => URL.revokeObjectURL(a.previewUrl)), []);
+
+  useEffect(() => {
+    if (!panel) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPanel(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [panel]);
+
+  useEffect(() => { chatsRef.current = chats; }, [chats]);
+
+  // ---- cloud sync: pull once after sign-in, then push changes ----
+  useEffect(() => {
+    if (!hydrated || !user.email || syncStartedRef.current) return;
+    syncStartedRef.current = true;
+    (async () => {
+      setCloud("syncing");
+      const [c, st] = await Promise.all([pullChats(), pullSettings()]);
+      if (!c.ok) {
+        setCloud(tableMissing(c.error) ? "setup" : "error");
+        return;
+      }
+      const local = chatsRef.current;
+      const byId = new Map(local.map((x) => [x.id, x]));
+      for (const r of c.chats) {
+        const mine = byId.get(r.id);
+        if (!mine || (mine.messages.length === 0 && r.messages.length > 0) || r.updated > mine.updated) {
+          byId.set(r.id, { id: r.id, title: r.title, updated: r.updated, messages: r.messages as Msg[] });
+        }
+        pushedRef.current[r.id] = r.updated;
+      }
+      const merged = Array.from(byId.values()).sort((a, b) => b.updated - a.updated).slice(0, 60);
+      setChats(merged);
+      if (st.ok && st.settings) {
+        const cs = st.settings;
+        setInstructions((cur) => cur || cs.instructions);
+        setNotes((cur) => Array.from(new Set([...cur, ...cs.notes])).slice(-30));
+        setDone((cur) => Array.from(new Set([...cur, ...cs.done])));
+      }
+      setSettingsReady(st.ok);
+      setCloudReady(true);
+      setCloud("on");
+    })();
+  }, [hydrated, user.email]);
+
+  useEffect(() => {
+    if (!cloudReady) return;
+    const t = setTimeout(async () => {
+      const due = chats.filter((c) => c.messages.length > 0 && c.updated > (pushedRef.current[c.id] ?? 0));
+      if (due.length === 0) return;
+      const r = await pushChats(due);
+      if (r.ok) { due.forEach((c) => { pushedRef.current[c.id] = c.updated; }); setCloud("on"); }
+      else setCloud(tableMissing(r.error) ? "setup" : "error");
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [chats, cloudReady]);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    const t = setTimeout(() => { pushSettings({ instructions, notes, done }); }, 1500);
+    return () => clearTimeout(t);
+  }, [instructions, notes, done, settingsReady]);
+
+  // ---- chats ----
+  function startNewChat() {
+    const cur = chats.find((c) => c.id === activeId);
+    if (cur && cur.messages.length === 0 && messages.length === 0) { inputRef.current?.focus(); return; }
+    const c = newChat();
+    setChats((cs) => [c, ...cs]);
+    setActiveId(c.id);
+    setMessages([]);
+    setInput("");
+    stopSpeaking();
+    inputRef.current?.focus();
+  }
+  function selectChat(id: string) {
+    const c = chats.find((x) => x.id === id);
+    if (!c || id === activeId) return;
+    setActiveId(id);
+    setMessages(c.messages);
+    setInput("");
+    stopSpeaking();
+  }
+  function renameChat(id: string) {
+    const c = chats.find((x) => x.id === id);
+    const t = window.prompt("Rename chat", c?.title ?? "");
+    if (t && t.trim()) setChats((cs) => cs.map((x) => (x.id === id ? { ...x, title: t.trim().slice(0, 60) } : x)));
+  }
+  function deleteChat(id: string) {
+    if (!window.confirm("Delete this chat? This cannot be undone.")) return;
+    if (cloudReady) removeChat(id);
+    const rest = chats.filter((c) => c.id !== id);
+    if (id !== activeId) { setChats(rest); return; }
+    if (rest.length) { setChats(rest); setActiveId(rest[0].id); setMessages(rest[0].messages); }
+    else { const c = newChat(); setChats([c]); setActiveId(c.id); setMessages([]); }
+  }
+
+  const sidebarChats = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return chats
+      .filter((c) => c.messages.length > 0 || c.id === activeId)
+      .filter((c) => !q || c.title.toLowerCase().includes(q) || c.messages.some((m) => m.text.toLowerCase().includes(q)))
+      .sort((a, b) => b.updated - a.updated)
+      .map((c) => ({ id: c.id, title: c.title, updated: c.updated }));
+  }, [chats, query, activeId]);
+
+  function memoryText() {
+    const parts: string[] = [];
+    if (instructions.trim()) parts.push("The user's own instructions about how to answer (follow them unless they conflict with safety): " + instructions.trim());
+    parts.push(...notes.map((n) => "- " + n));
+    if (tutor) {
+      parts.push(
+        "Ethical hacking course. Completed: " +
+          (done.length ? done.map((i) => COURSE[i]).join("; ") : "nothing yet") +
+          ". Next: " +
+          (COURSE.find((_, i) => !done.includes(i)) ?? "all modules done")
+      );
+    }
+    return parts.join("\n");
+  }
+
+  // ---- speech out ----
+  function stopSpeaking() {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (watchRef.current) { clearInterval(watchRef.current); watchRef.current = null; }
+    speakingRef.current = false;
+    speakEndRef.current = Date.now();
+    setSpeaking(false);
+    setSpeakingIdx(null);
+  }
+
+  function speak(text: string, force = false, idx: number | null = null) {
+    if ((!voiceOn && !force) || !("speechSynthesis" in window)) return;
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = langRef.current;
+    const all = synth.getVoices();
+    const chosen = all.find((v) => v.name === voiceNameRef.current) || all.find((v) => v.lang.replace("_", "-").toLowerCase().startsWith(langRef.current.slice(0, 2).toLowerCase()));
+    if (chosen) u.voice = chosen;
+    utterRef.current = u; // keep a reference so Chrome does not drop the end event
+    const finish = () => {
+      if (watchRef.current) { clearInterval(watchRef.current); watchRef.current = null; }
+      speakingRef.current = false;
+      speakEndRef.current = Date.now();
+      setSpeaking(false);
+      setSpeakingIdx(null);
+    };
+    u.onstart = () => {
+      speakingRef.current = true;
+      setSpeaking(true);
+      setSpeakingIdx(idx);
+      // Safety net: Chrome sometimes never fires onend, which would leave the mic deaf.
+      if (watchRef.current) clearInterval(watchRef.current);
+      watchRef.current = setInterval(() => { if (!synth.speaking) finish(); }, 500);
+    };
+    u.onend = finish;
+    u.onerror = finish;
+    synth.speak(u);
+  }
+
+  function speakable(reply: string) {
+    const m = reply.match(/Answer:\s*([\s\S]*?)(?:\n\s*What I can see:|$)/i);
+    return (m ? m[1] : reply).replace(/[*#_`]/g, "").trim().slice(0, 500);
+  }
+
+  // ---- sending ----
+  function stopGenerating() {
+    abortRef.current?.abort();
+    xhrRef.current?.abort();
+  }
+
+  async function send(textIn?: string, base?: Msg[]) {
+    const text = (textIn ?? input).trim();
+    if ((!text && attachments.length === 0) || busy) return;
+    const rm = text.match(/^(?:remember|note)(?: that)?[:,\s]+(.{3,300})$/i);
+    if (rm) {
+      setNotes((n) => [...n, rm[1].trim()].slice(-30));
+      setMessages((m) => [...m, { role: "user", text }, { role: "jarvis", text: "Saved. I will remember that." }]);
+      setInput("");
+      return;
+    }
+    if (attachments.length > 0) {
+      await sendWithImages(text);
+      return;
+    }
+    stopSpeaking();
+    const next: Msg[] = [...(base ?? messages), { role: "user", text }];
+    setMessages(next);
+    setInput("");
+    setBusy(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: next, tutor, memory: memoryText() }),
+        signal: ctrl.signal,
+      });
+      if (res.status === 401 || res.status === 403) {
+        setMessages((m) => m.slice(0, -1));
+        setInput(text);
+        window.location.assign("/login");
+        return;
+      }
+      let data: any = {};
+      try { data = await res.json(); } catch {}
+      if (!res.ok || !data.reply) {
+        const why = res.status === 429 ? "Too many requests. Wait a moment and try again." : data.error ?? `Server error ${res.status}.`;
+        setMessages((m) => [...m, { role: "jarvis", text: `Error: ${why}` }]);
+        setInput((p) => p || text);
+      } else {
+        setMessages((m) => [...m, { role: "jarvis", text: data.reply }]);
+        if (data.provider) setLastProvider(data.provider);
+        speak(data.reply);
+      }
+    } catch (e: any) {
+      const stopped = e?.name === "AbortError";
+      setMessages((m) => [...m, { role: "jarvis", text: stopped ? "Error: Stopped. Your message is back in the box." : "Error: could not reach the server. Check your connection and try again." }]);
+      setInput((p) => p || text);
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+    }
+  }
+
+  const lastUserIdx = (() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "user") return i; return -1; })();
+  const canRetry = !busy && lastUserIdx >= 0 && !messages[lastUserIdx].images && attachments.length === 0;
+
+  function regenerate() {
+    if (!canRetry) return;
+    const text = messages[lastUserIdx].text;
+    const base = messages.slice(0, lastUserIdx);
+    setMessages(base);
+    send(text, base);
+  }
+  function editLast() {
+    if (!canRetry) return;
+    const text = messages[lastUserIdx].text;
+    setMessages(messages.slice(0, lastUserIdx));
+    setInput(text);
+    inputRef.current?.focus();
+  }
+  function rate(i: number, v: "up" | "down") {
+    setMessages((ms) => ms.map((m, k) => (k === i ? { ...m, fb: m.fb === v ? undefined : v } : m)));
+  }
+
+  async function addFiles(list: FileList | File[]) {
+    const incoming = Array.from(list);
+    if (incoming.length === 0) return;
+    setAttachNote("");
+    const problems: string[] = [];
+    for (const file of incoming) {
+      if (attachRef.current.length >= DEFAULT_LIMITS.maxFiles) {
+        problems.push(`Only ${DEFAULT_LIMITS.maxFiles} photos can be attached to one message.`);
+        break;
+      }
+      setPreparing((n) => n + 1);
+      const r = await prepareImage(file);
+      setPreparing((n) => n - 1);
+      if ("error" in r) { problems.push(r.error); continue; }
+      const total = attachRef.current.reduce((sum, a) => sum + a.file.size, 0) + r.file.size;
+      if (total > DEFAULT_LIMITS.maxTotalBytes) {
+        problems.push(`${file.name}: skipped, because the photos in one message can total at most ${(DEFAULT_LIMITS.maxTotalBytes / 1_000_000).toFixed(0)} MB.`);
+        continue;
+      }
+      const item: Attachment = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, file: r.file, previewUrl: URL.createObjectURL(r.file) };
+      attachRef.current = [...attachRef.current, item];
+      setAttachments(attachRef.current);
+    }
+    if (problems.length) setAttachNote(Array.from(new Set(problems)).join(" "));
+  }
+
+  function removeAttachment(id: string) {
+    const gone = attachRef.current.find((a) => a.id === id);
+    if (gone) URL.revokeObjectURL(gone.previewUrl);
+    attachRef.current = attachRef.current.filter((a) => a.id !== id);
+    setAttachments(attachRef.current);
+    if (attachRef.current.length === 0) setDetails("");
+    setAttachNote("");
+  }
+
+  function openCamera() {
+    setAttachMenu(false);
+    if (typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getUserMedia === "function") {
+      setCameraOpen(true);
+    } else {
+      setAttachNote("Live camera is not available in this browser (it needs https or localhost). Opening your device camera or file picker instead.");
+      captureInputRef.current?.click();
+    }
+  }
+
+  function postAnalyze(form: FormData): Promise<{ status: number; final?: any; error?: string }> {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
+      xhr.open("POST", "/api/analyze");
+      xhr.timeout = 120000;
+      let seen = 0;
+      let final: any = null;
+      const pump = () => {
+        const t = xhr.responseText;
+        const nl = t.lastIndexOf("\n");
+        if (nl < seen) return;
+        const chunk = t.slice(seen, nl + 1);
+        seen = nl + 1;
+        for (const line of chunk.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const o = JSON.parse(line);
+            if (o.type === "status") setStatusText(o.message);
+            else final = o;
+          } catch {}
+        }
+      };
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100)); };
+      xhr.upload.onload = () => { setUploadPct(100); setStatusText("Waiting for the analysis..."); };
+      xhr.onprogress = () => { if (xhr.status === 200) pump(); };
+      xhr.onerror = () => resolve({ status: 0, error: "Could not reach the server. Check your connection and try again." });
+      xhr.onabort = () => resolve({ status: 0, error: "Stopped. Your photos and question are still here." });
+      xhr.ontimeout = () => resolve({ status: 0, error: "The analysis took too long and was stopped. Try fewer or smaller photos." });
+      xhr.onload = () => {
+        if (xhr.status === 200) { pump(); resolve({ status: 200, final }); }
+        else {
+          let msg = "";
+          try { msg = JSON.parse(xhr.responseText).error; } catch {}
+          resolve({ status: xhr.status, error: msg || `Server error ${xhr.status}.` });
+        }
+      };
+      xhr.send(form);
+    });
+  }
+
+  async function sendWithImages(text: string) {
+    stopSpeaking();
+    const files = attachments.map((a) => a.file);
+    const shown = text || "Analyse this photo.";
+    const history = messages
+      .filter((m) => !m.text.startsWith("Error:"))
+      .slice(-10)
+      .map((m) => ({ role: m.role, text: m.text }));
+    const form = new FormData();
+    files.forEach((f) => form.append("files", f, f.name));
+    form.append("question", text);
+    form.append("context", details.trim());
+    form.append("think", think ? "1" : "0");
+    form.append("history", JSON.stringify(history));
+    form.append("memory", memoryText());
+
+    setMessages((m) => [...m, { role: "user", text: shown, images: files.map((f) => f.name) }]);
+    setInput("");
+    setAttachNote("");
+    setBusy(true);
+    setUploadPct(0);
+    setStatusText("Uploading...");
+    const r = await postAnalyze(form);
+    xhrRef.current = null;
+    setUploadPct(null);
+    setStatusText("");
+
+    if (r.status === 401 || r.status === 403) {
+      setMessages((m) => m.slice(0, -1));
+      setInput(text);
+      window.location.assign("/login");
+    } else if (r.status === 200 && r.final?.type === "result") {
+      const f = r.final;
+      const skipped: string[] = (f.skipped ?? []).map((x: any) => `${x.file}: ${x.reason}`);
+      setMessages((m) => [...m, { role: "jarvis", text: f.reply, notes: skipped.length ? skipped : undefined, explanation: f.explanation }]);
+      if (f.provider) setLastProvider(f.provider);
+      speak(speakable(f.reply));
+    } else {
+      const f = r.final;
+      const why = r.status === 200 ? f?.error || "The analysis did not finish." : r.status === 429 ? r.error || "Too many requests. Wait a moment." : r.error;
+      const skipped: string[] = (f?.skipped ?? []).map((x: any) => `${x.file}: ${x.reason}`);
+      setMessages((m) => [...m, { role: "jarvis", text: `Error: ${why}`, notes: skipped.length ? skipped : undefined }]);
+      setInput((p) => p || text);
+    }
+    setBusy(false);
+  }
+
+  const sendRef = useRef(send);
+  sendRef.current = send;
+
+  // ---- voice in (unchanged behaviour) ----
+  function clearAwake() {
+    awakeRef.current = false;
+    setAwake(false);
+    if (awakeTimer.current) clearTimeout(awakeTimer.current);
+  }
+  function stopRec() { try { recRef.current?.stop(); } catch {} }
+  function setAwakeNow() {
+    awakeRef.current = true;
+    setAwake(true);
+    if (awakeTimer.current) clearTimeout(awakeTimer.current);
+    awakeTimer.current = setTimeout(() => {
+      clearAwake();
+      if (oneShotRef.current) stopRec();
+    }, 9000);
+  }
+  function handleFinal(text: string) {
+    // Ignore anything heard while AI Krish is talking (or just after), so it does not hear itself.
+    setHeard((prev) => [...prev, text.trim()].slice(-3));
+    if ((speakingRef.current && window.speechSynthesis.speaking) || Date.now() - speakEndRef.current < 900) return;
+    const t = text.trim();
+    if (!t) return;
+    if (awakeRef.current) {
+      clearAwake();
+      sendRef.current(t);
+      if (oneShotRef.current) stopRec();
+      return;
+    }
+    const m = t.match(WAKE);
+    if (m) {
+      const rest = t.slice((m.index ?? 0) + m[0].length).trim();
+      if (rest.length > 1) sendRef.current(rest);
+      else setAwakeNow();
+    }
+  }
+  function startRec(): boolean {
+    if (runningRef.current) return true;
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setMicError("Voice input needs a browser with speech recognition, such as Google Chrome. You can still type.");
+      return false;
+    }
+    const rec = new SR();
+    rec.lang = langRef.current;
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onstart = () => { runningRef.current = true; setMicOpen(true); };
+    rec.onend = () => {
+      runningRef.current = false;
+      setMicOpen(false);
+      // Chrome stops listening after a quiet spell, so reopen it while "Hey Krish" is on.
+      if (wakeRef.current) setTimeout(() => { if (wakeRef.current) startRec(); }, 400);
+    };
+    rec.onerror = (e: any) => {
+      if (e?.error === "not-allowed" || e?.error === "service-not-allowed") {
+        wakeRef.current = false;
+        setWakeOn(false);
+        clearAwake();
+        setMicError("Microphone is blocked. Allow it in the browser address bar, then try again.");
+      } else if (e?.error === "audio-capture") {
+        setMicError("No microphone was found on this device.");
+      }
+    };
+    rec.onresult = (e: any) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) handleFinal(e.results[i][0].transcript);
+      }
+    };
+    recRef.current = rec;
+    try { rec.start(); } catch { if (wakeRef.current) setTimeout(() => { if (wakeRef.current) startRec(); }, 700); }
+    return true;
+  }
+  function toggleWake() {
+    if (wakeOn) {
+      wakeRef.current = false;
+      setWakeOn(false);
+      clearAwake();
+      stopRec();
+      return;
+    }
+    setMicError("");
+    wakeRef.current = true;
+    oneShotRef.current = false;
+    setWakeOn(true);
+    if (!startRec()) { wakeRef.current = false; setWakeOn(false); }
+  }
+  function talk() {
+    if (awake) {
+      clearAwake();
+      if (!wakeRef.current) stopRec();
+      return;
+    }
+    setMicError("");
+    stopSpeaking();
+    oneShotRef.current = !wakeRef.current;
+    setAwakeNow();
+    if (!startRec()) clearAwake();
+  }
+
+  function changeLang(code: string) {
+    setLang(code);
+    langRef.current = code;
+    setVoiceName("");
+    // Restart recognition so the new language takes effect.
+    if (runningRef.current) { stopRec(); }
+  }
+
+  function cardAction(id: string) {
+    if (id === "ask") inputRef.current?.focus();
+    else if (id === "photo") fileInputRef.current?.click();
+    else if (id === "research") { setInput("Research this topic and compare the main options: "); inputRef.current?.focus(); }
+    else if (id === "learn") { setTutor(true); setInput("Teach me the next module."); inputRef.current?.focus(); }
+  }
+
+  const mode: OrbMode = busy ? "thinking" : speaking ? "speaking" : awake ? "listening" : wakeOn ? "standby" : "idle";
+  const langVoices = voices.filter((v) => v.lang.replace("_", "-").toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+  const canListen = useSyncExternalStore(
+    () => () => {},
+    () => !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
+    () => true, // same on the server and during hydration, so the text matches
+  );
+
+  const toggleBtn = (on: boolean, label: string, onClick: () => void, icon: "mic" | "speaker" | "brain", iconOnlyOnPhone = false) => (
+    <button onClick={onClick} aria-pressed={on} aria-label={label}
+      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${FOCUS} ${on ? "border-violet-200 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+      <Icon n={icon} size={16} /> <span className={`whitespace-nowrap ${iconOnlyOnPhone ? "hidden sm:inline" : ""}`}>{label}</span>
+    </button>
+  );
+
+  const thinkSwitch = (
+    <button role="switch" aria-checked={think} onClick={() => setThink(!think)}
+      title="Deep analysis for photos: looks first, answers, then checks the answer against the image. Text chat is unchanged."
+      className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${FOCUS} ${think ? "border-violet-200 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+      <span className="whitespace-nowrap">Think Harder</span>
+      <span className={`relative h-5 w-9 rounded-full transition-colors ${think ? "bg-violet-600" : "bg-slate-300"}`}>
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${think ? "left-[1.1rem]" : "left-0.5"}`} />
+      </span>
+    </button>
+  );
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="flex h-dvh bg-white text-slate-900">
+      <OrbStyles />
+
+      <Sidebar
+        collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)}
+        mobileOpen={mobileNav} onClose={() => setMobileNav(false)}
+        name={user.name} email={user.email}
+        chats={sidebarChats} activeId={activeId} query={query} setQuery={setQuery} searchRef={searchRef}
+        onNew={startNewChat} onSelect={selectChat} onRename={renameChat} onDelete={deleteChat}
+        onMemory={() => setPanel("memory")} onSettings={() => setPanel("settings")}
+      />
+
+      <div className="flex min-w-0 flex-1">
+        <main className="flex min-w-0 flex-1 flex-col bg-gradient-to-b from-white to-slate-50/60">
+          {/* Header */}
+          <header className="flex items-center gap-3 border-b border-slate-100 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-5">
+            <button onClick={() => setMobileNav(true)} aria-label="Open menu" className={`rounded-lg p-2 text-slate-600 hover:bg-slate-100 md:hidden ${FOCUS}`}><Icon n="menu" /></button>
+            <Orb mode={mode} size={36} small />
+            <div className="min-w-0 leading-tight">
+              <div className="text-base font-bold tracking-wide">AI KRISH</div>
+              <div className="truncate text-xs text-slate-500" aria-live="polite">{LABEL[mode]}</div>
+            </div>
+            <div className="ml-auto flex items-center gap-2 overflow-x-auto py-1">
+              {lastProvider && <span className="hidden whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 lg:inline" title="The provider that answered last">Model: {lastProvider}</span>}
+              <span className="hidden sm:block">{thinkSwitch}</span>
+              {toggleBtn(wakeOn, wakeOn ? "Hey Krish: On" : "Hey Krish", toggleWake, "mic", true)}
+              {toggleBtn(voiceOn, voiceOn ? "Voice On" : "Voice Off", () => { if (voiceOn) stopSpeaking(); setVoiceOn(!voiceOn); }, "speaker", true)}
+            </div>
+          </header>
+
+          {micError && <div role="alert" className="mx-4 mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{micError}</div>}
+
+          {/* Conversation / welcome */}
+          <section
+            onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false); }}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+            className="relative min-h-0 flex-1 overflow-y-auto px-4 sm:px-6">
+            {dragOver && (
+              <div className="pointer-events-none absolute inset-3 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-violet-300 bg-violet-50/90 text-sm font-semibold text-violet-700">
+                Drop photos here to attach them
+              </div>
+            )}
+
+            {!started ? (
+              <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center py-6 text-center">
+                <button onClick={talk} aria-label={awake ? "Stop listening" : "Talk to AI Krish"} className={`rounded-full ${FOCUS}`}>
+                  <Orb mode={mode} size={260} />
+                </button>
+                <div className="mt-1 h-5 text-sm text-slate-500" aria-hidden>{speaking ? <Wave /> : LABEL[mode]}</div>
+                <h1 className="mt-4 text-4xl font-bold tracking-tight sm:text-5xl">
+                  Hello{firstName ? ", " : ""}
+                  {firstName && <span className="bg-gradient-to-r from-violet-600 to-blue-500 bg-clip-text text-transparent">{firstName}</span>}
+                </h1>
+                <p className="mt-1 text-2xl text-slate-800 sm:text-3xl">What can we create today?</p>
+                <p className="mt-3 max-w-lg text-sm text-slate-500">Ask a question, speak naturally, or upload a photo for analysis.</p>
+                <div className="mt-7 grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {CARDS.map((c) => (
+                    <button key={c.id} onClick={() => cardAction(c.id)}
+                      className={`group flex flex-col items-start rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-violet-200 hover:shadow-md ${FOCUS}`}>
+                      <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600"><Icon n={c.icon} /></span>
+                      <span className="font-semibold">{c.title}</span>
+                      <span className="mt-1 flex-1 text-xs leading-relaxed text-slate-500">{c.text}</span>
+                      <span className="mt-3 flex h-7 w-7 items-center justify-center rounded-full bg-violet-50 text-violet-600"><Icon n="arrow" size={14} /></span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="mx-auto max-w-3xl space-y-5 py-6">
+                {messages.map((m, i) => (
+                  <div key={i} className={`flex gap-3 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                    {m.role === "jarvis" && <div className="mt-1"><Orb mode="idle" size={30} small /></div>}
+                    <div className={`max-w-[88%] ${m.role === "user" ? "rounded-2xl rounded-br-md bg-gradient-to-br from-violet-600 to-blue-600 px-4 py-2.5 text-white shadow-sm" : "min-w-0 flex-1 text-slate-800"}`}>
+                      {m.role === "user"
+                        ? <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">{m.text}</div>
+                        : <div className={m.text.startsWith("Error:") ? "rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-red-700" : ""}><Markdown text={m.text} /></div>}
+                      {m.images && m.images.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {m.images.map((n, k) => <span key={k} className="max-w-[10rem] truncate rounded-md bg-white/20 px-1.5 py-0.5 text-[11px]">Photo: {n}</span>)}
+                        </div>
+                      )}
+                      {m.notes && m.notes.length > 0 && (
+                        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">{m.notes.map((n, k) => <div key={k}>{n}</div>)}</div>
+                      )}
+                      {m.explanation && <div className="mt-2 border-t border-slate-200 pt-1 text-[11px] text-slate-500">{m.explanation}</div>}
+                      {m.role === "jarvis" && !m.text.startsWith("Error:") && (
+                        <div className="mt-1 flex gap-1 text-slate-400">
+                          <button onClick={async () => { try { await navigator.clipboard.writeText(m.text); setCopiedIdx(i); setTimeout(() => setCopiedIdx(null), 1500); } catch {} }}
+                            aria-label="Copy reply" className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-xs hover:bg-slate-100 hover:text-slate-700 ${FOCUS}`}>
+                            <Icon n="copy" size={14} /> {copiedIdx === i ? "Copied" : "Copy"}
+                          </button>
+                          <button onClick={() => (speakingIdx === i ? stopSpeaking() : speak(speakable(m.text), true, i))}
+                            aria-label={speakingIdx === i ? "Stop reading aloud" : "Read aloud"} className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-xs hover:bg-slate-100 hover:text-slate-700 ${FOCUS}`}>
+                            <Icon n={speakingIdx === i ? "stop" : "speaker"} size={14} /> {speakingIdx === i ? "Stop" : "Listen"}
+                          </button>
+                          <button onClick={() => rate(i, "up")} aria-label="Good reply" aria-pressed={m.fb === "up"}
+                            className={`rounded-md p-1.5 hover:bg-slate-100 ${m.fb === "up" ? "text-violet-600" : "hover:text-slate-700"} ${FOCUS}`}><Icon n="thumb" size={14} /></button>
+                          <button onClick={() => rate(i, "down")} aria-label="Bad reply" aria-pressed={m.fb === "down"}
+                            className={`rounded-md p-1.5 hover:bg-slate-100 ${m.fb === "down" ? "text-red-600" : "hover:text-slate-700"} ${FOCUS}`}><Icon n="thumb" size={14} className="rotate-180" /></button>
+                          {i === messages.length - 1 && canRetry && (
+                            <button onClick={regenerate} aria-label="Regenerate reply" className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-xs hover:bg-slate-100 hover:text-slate-700 ${FOCUS}`}>
+                              <Icon n="refresh" size={14} /> Regenerate
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {m.role === "jarvis" && m.text.startsWith("Error:") && i === messages.length - 1 && canRetry && (
+                        <button onClick={regenerate} className={`mt-1 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700 ${FOCUS}`}>
+                          <Icon n="refresh" size={14} /> Try again
+                        </button>
+                      )}
+                      {m.role === "user" && i === lastUserIdx && canRetry && (
+                        <button onClick={editLast} aria-label="Edit your message" className={`mt-1 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-white/80 hover:bg-white/15 ${FOCUS}`}>
+                          <Icon n="edit" size={13} /> Edit
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {busy && (
+                  <div className="flex items-center gap-3 text-sm text-slate-500" role="status">
+                    <Orb mode="thinking" size={30} small /> <span className="animate-pulse">{statusText || "AI Krish is thinking..."}</span>
+                  </div>
+                )}
+                <div ref={endRef} />
+              </div>
+            )}
+          </section>
+
+          {/* Composer */}
+          <div className="px-3 pb-3 sm:px-6 sm:pb-4">
+            <div className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-2.5 shadow-lg shadow-slate-200/60">
+              <AttachmentTray items={attachments} preparing={preparing} progress={uploadPct} onRemove={removeAttachment} />
+              {attachments.length > 0 && (
+                <input value={details} onChange={(e) => setDetails(e.target.value.slice(0, 1000))} aria-label="Details about the photo"
+                  placeholder="Add details about the photo (optional): where, when, what to check"
+                  className="mb-2 mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs outline-none placeholder:text-slate-400 focus:border-violet-400" />
+              )}
+              {attachNote && <div role="alert" className="mb-2 mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{attachNote}</div>}
+
+              <div className="relative flex items-end gap-1.5">
+                <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files ?? []); e.target.value = ""; }} />
+                <input ref={captureInputRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { addFiles(e.target.files ?? []); e.target.value = ""; }} />
+                {attachMenu && <div className="fixed inset-0 z-20" onClick={() => setAttachMenu(false)} />}
+                {attachMenu && (
+                  <div className="absolute bottom-full left-0 z-30 mb-2 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white text-sm shadow-lg">
+                    <button onClick={() => { setAttachMenu(false); fileInputRef.current?.click(); }} className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50">Photo or image</button>
+                    <button onClick={openCamera} className="block w-full px-4 py-2 text-left text-slate-700 hover:bg-slate-50">Take a photo</button>
+                  </div>
+                )}
+                <button onClick={() => setAttachMenu(!attachMenu)} aria-label="Attach a photo" aria-expanded={attachMenu} className={`rounded-full border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50 ${FOCUS}`}><Icon n="clip" /></button>
+                <button onClick={openCamera} aria-label="Take a photo" className={`hidden rounded-full border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50 sm:block ${FOCUS}`}><Icon n="camera" /></button>
+                <textarea ref={inputRef} rows={1} value={input} aria-label="Message"
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
+                  onPaste={(e) => {
+                    const imgs = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+                    if (imgs.length) { e.preventDefault(); addFiles(imgs); }
+                  }}
+                  placeholder={attachments.length ? "Ask about the photo(s)..." : "Ask anything, Krish..."}
+                  className="max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-[15px] outline-none placeholder:text-slate-400" />
+                <button onClick={talk} aria-label={awake ? "Stop listening" : "Talk to AI Krish"} aria-pressed={awake}
+                  className={`rounded-full p-2.5 ${FOCUS} ${awake ? "animate-pulse bg-cyan-100 text-cyan-700" : "text-slate-600 hover:bg-slate-100"}`}><Icon n="mic" /></button>
+                {busy ? (
+                  <button onClick={stopGenerating} aria-label="Stop" className={`rounded-full bg-slate-800 p-2.5 text-white hover:bg-slate-700 ${FOCUS}`}><Icon n="stop" /></button>
+                ) : (
+                  <button onClick={() => send()} aria-label="Send" disabled={!input.trim() && attachments.length === 0}
+                    className={`rounded-full bg-gradient-to-br from-violet-600 to-blue-500 p-2.5 text-white shadow shadow-violet-200 hover:brightness-110 disabled:opacity-40 ${FOCUS}`}><Icon n="send" /></button>
+                )}
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2">
+                <span className="sm:hidden">{thinkSwitch}</span>
+                {toggleBtn(tutor, tutor ? "Tutor: On" : "Tutor", () => setTutor(!tutor), "brain")}
+                <span className="ml-auto hidden text-[11px] text-slate-400 sm:block">
+                  {attachments.length > 0 ? "Photos stay attached for follow-ups. Remove them when done." : "Enter to send, Shift+Enter for a new line. Drag or paste photos."}
+                </span>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        {/* Right panel */}
+        <aside className="hidden w-72 flex-none flex-col gap-3 overflow-y-auto border-l border-slate-100 bg-slate-50/50 p-3 xl:flex" aria-label="Assistant panel">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-center shadow-sm">
+            <div className="text-left text-sm font-semibold">AI Assistant</div>
+            <div className="flex justify-center py-2"><Orb mode={mode} size={150} small /></div>
+            <div className="text-sm font-medium text-slate-700" aria-live="polite">{mode === "idle" ? "Ready" : LABEL[mode].replace("...", "")}</div>
+            <div className="mt-1 h-4">{speaking && <Wave />}</div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold">Voice Assistant</div>
+            <p className="mt-1 text-xs text-slate-500">{canListen ? (awake ? "Listening. Tap to stop." : "Tap the mic and speak.") : "Speech recognition is not supported in this browser."}</p>
+            <button onClick={talk} aria-label={awake ? "Stop listening" : "Talk to AI Krish"} className={`mx-auto mt-3 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-blue-500 text-white shadow-lg shadow-violet-200 ${awake ? "animate-pulse" : ""} ${FOCUS}`}><Icon n="mic" size={22} /></button>
+            <div className="mt-3 text-center text-[11px] uppercase tracking-widest text-slate-400">Talk to AI Krish</div>
+            {heard.length > 0 && <div className="mt-2 truncate text-center text-xs text-slate-400" title={heard.join(" | ")}>Heard: {heard[heard.length - 1]}</div>}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-2 text-sm font-semibold">Quick Actions</div>
+            {[
+              { l: "Analyze a photo", i: "image", f: () => fileInputRef.current?.click() },
+              { l: "Take a photo", i: "camera", f: openCamera },
+              { l: "Research a topic", i: "research", f: () => cardAction("research") },
+              { l: "Open memory", i: "memory", f: () => setPanel("memory") },
+            ].map((a) => (
+              <button key={a.l} onClick={a.f} className={`mb-1.5 flex w-full items-center gap-2.5 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left text-sm text-slate-700 hover:bg-violet-50 ${FOCUS}`}>
+                <Icon n={a.i as any} size={16} className="text-violet-600" /> {a.l}
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-2 text-sm font-semibold">Recent Activity</div>
+            {sidebarChats.filter((c) => c.id !== activeId || started).length === 0 ? (
+              <p className="text-xs text-slate-400">No recent activity. Start a conversation to see your history.</p>
+            ) : (
+              <ul className="space-y-1">
+                {sidebarChats.filter((c) => chats.find((x) => x.id === c.id)?.messages.length).slice(0, 4).map((c) => (
+                  <li key={c.id}><button onClick={() => selectChat(c.id)} className={`w-full truncate rounded-lg px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-50 ${FOCUS}`}>{c.title}</button></li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </aside>
+      </div>
+
+      {/* Memory + settings sheet */}
+      {panel && (
+        <div className="fixed inset-0 z-[60] flex justify-end bg-slate-900/30" onClick={() => setPanel(null)}>
+          <div role="dialog" aria-modal="true" aria-label={panel === "memory" ? "Memory and learning" : "Settings"} onClick={(e) => e.stopPropagation()}
+            className="h-full w-full max-w-md overflow-y-auto bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">{panel === "memory" ? "Memory and learning" : "Settings"}</h2>
+              <button autoFocus onClick={() => setPanel(null)} aria-label="Close" className={`rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 ${FOCUS}`}><Icon n="x" /></button>
+            </div>
+
+            {panel === "memory" ? (
+              <>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">Saved notes</div>
+                <div className="mb-2 text-xs text-slate-400">Type or say: remember that ...</div>
+                {notes.length === 0 && <div className="mb-3 text-sm text-slate-400">Nothing saved yet.</div>}
+                <ul className="mb-3 space-y-1">
+                  {notes.map((n, i) => (
+                    <li key={i} className="flex items-start justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                      <span>{n}</span>
+                      <button onClick={() => setNotes((x) => x.filter((_, j) => j !== i))} aria-label="Delete note" className={`text-slate-400 hover:text-red-600 ${FOCUS}`}><Icon n="x" size={14} /></button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mb-1 mt-4 text-xs font-semibold uppercase tracking-widest text-slate-500">Ethical hacking course ({done.length}/{COURSE.length})</div>
+                <ul className="mb-3 space-y-1">
+                  {COURSE.map((c, i) => (
+                    <li key={c}>
+                      <label className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-800 hover:bg-slate-50">
+                        <input type="checkbox" checked={done.includes(i)} onChange={() => setDone((d) => (d.includes(i) ? d.filter((x) => x !== i) : [...d, i]))} />
+                        {c}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mb-4 text-xs text-slate-500">Turn Tutor on, then ask: teach me the next module. Practice only in your own lab or on legal platforms such as TryHackMe, OverTheWire, PortSwigger Web Security Academy and picoCTF.</div>
+                <button onClick={() => setNotes([])} className={`rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 ${FOCUS}`}>Clear all notes</button>
+                <div className="mt-3 text-xs text-slate-400">Notes are saved in this browser, and in your account when cloud sync is on (Settings).</div>
+              </>
+            ) : (
+              <div className="space-y-5 text-sm">
+                <label className="block">
+                  <span className="mb-1 block font-medium">Custom instructions</span>
+                  <textarea value={instructions} onChange={(e) => setInstructions(e.target.value.slice(0, 1000))} rows={5}
+                    placeholder="Tell AI Krish about yourself and how to answer. Example: I am an EEE student in Chennai. Keep answers short and explain with examples."
+                    className="w-full resize-y rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-violet-400" />
+                  <span className="mt-1 block text-xs text-slate-500">{instructions.length}/1000. Sent with every message and every photo question. Do not put passwords or keys here.</span>
+                </label>
+                <div className="rounded-xl border border-slate-200 p-3">
+                  <div className="font-medium">Cloud sync</div>
+                  <div className="mt-1 text-xs text-slate-600" role="status">
+                    {cloud === "on" && "On. Your chats, notes and instructions are saved to your account and follow you to other devices."}
+                    {cloud === "syncing" && "Syncing..."}
+                    {cloud === "off" && "Starts after sign-in."}
+                    {cloud === "setup" && "Not set up yet. Run supabase/chat-sync.sql once in the Supabase SQL Editor. Until then everything stays in this browser only."}
+                    {cloud === "error" && "Could not reach the cloud copy. Your chats are still safe in this browser and will sync when it is back."}
+                  </div>
+                </div>
+                <label className="block">
+                  <span className="mb-1 block font-medium">Language for listening and speaking</span>
+                  <select value={lang} onChange={(e) => changeLang(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2">
+                    {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+                  </select>
+                  <span className="mt-1 block text-xs text-slate-500">Whether this works depends on your browser and device. {lang.startsWith("ta") && (langVoices.length ? `${langVoices.length} Tamil voice(s) found on this device.` : "No Tamil voice was found on this device, so replies may be read in a default voice.")}</span>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block font-medium">Voice</span>
+                  <select value={voiceName} onChange={(e) => setVoiceName(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2">
+                    <option value="">Automatic</option>
+                    {langVoices.map((v) => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
+                  </select>
+                </label>
+                <div className="flex items-center justify-between rounded-xl border border-slate-200 p-3">
+                  <div><div className="font-medium">Speak replies aloud</div><div className="text-xs text-slate-500">Reads each answer after it arrives.</div></div>
+                  <button role="switch" aria-checked={voiceOn} onClick={() => { if (voiceOn) stopSpeaking(); setVoiceOn(!voiceOn); }} className={`relative h-6 w-11 rounded-full ${voiceOn ? "bg-violet-600" : "bg-slate-300"} ${FOCUS}`}>
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${voiceOn ? "left-[1.35rem]" : "left-0.5"}`} />
+                  </button>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500">
+                  The microphone only opens after you tap Talk or turn on &quot;Hey Krish&quot;. Speech recognition uses your browser&apos;s built-in service. Chats and notes are kept in this browser, and also in your account once cloud sync is on.
+                  <button onClick={() => { if (cloudReady) removeAllChats(); setChats([]); setNotes([]); const c = newChat(); setChats([c]); setActiveId(c.id); setMessages([]); setPanel(null); }}
+                    className={`mt-3 block rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 ${FOCUS}`}>Delete all chats and notes</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      )}
+
+      {cameraOpen && <CameraModal onCapture={(f) => addFiles([f])} onClose={() => setCameraOpen(false)} />}
     </div>
   );
 }

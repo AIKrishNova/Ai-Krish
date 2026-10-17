@@ -1,0 +1,150 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CATALOGUE,
+  CLASS_LABEL,
+  CLASS_ORDER,
+  getStatus,
+  search,
+  STATUS_LABEL,
+  type Asset,
+  type AssetClass,
+  type AssetStatus,
+} from "../../lib/catalogue";
+
+const BADGE: Record<AssetStatus, string> = {
+  live: "border-green-400/40 bg-green-500/10 text-green-300",
+  provider_required: "border-yellow-300/40 bg-yellow-400/10 text-yellow-200",
+  reference_only: "border-slate-400/30 bg-slate-400/10 text-slate-300",
+};
+const DOT: Record<AssetStatus, string> = {
+  live: "bg-green-400",
+  provider_required: "bg-yellow-300",
+  reference_only: "bg-slate-400",
+};
+
+const COUNTS = Object.fromEntries(
+  CLASS_ORDER.map((c) => [c, CATALOGUE.filter((a) => a.assetClass === c).length])
+) as Record<AssetClass, number>;
+
+export default function AssetPicker({
+  selectedId,
+  onSelect,
+}: {
+  selectedId: string;
+  onSelect: (asset: Asset) => void;
+}) {
+  const [cls, setCls] = useState<AssetClass | "all">("all");
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const selected = CATALOGUE.find((a) => a.id === selectedId);
+  const selectedStatus = selected ? getStatus(selected) : null;
+  const results = useMemo(() => search(q, cls), [q, cls]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function choose(a: Asset) {
+    onSelect(a);
+    setOpen(false);
+    setQ("");
+  }
+
+  return (
+    <div ref={boxRef} className="relative flex items-center gap-2">
+      <select
+        value={cls}
+        onChange={(ev) => setCls(ev.target.value as AssetClass | "all")}
+        aria-label="Asset category"
+        className="rounded-lg border border-cyan-400/30 bg-black/40 px-3 py-2 text-sm"
+      >
+        <option value="all">All categories ({CATALOGUE.length})</option>
+        {CLASS_ORDER.map((c) => (
+          <option key={c} value={c}>
+            {CLASS_LABEL[c]} ({COUNTS[c]})
+          </option>
+        ))}
+      </select>
+
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex min-w-[14rem] items-center justify-between gap-2 rounded-lg border border-cyan-400/30 bg-black/40 px-3 py-2 text-left text-sm"
+      >
+        <span className="flex items-center gap-2">
+          {selectedStatus && <span className={`h-2 w-2 rounded-full ${DOT[selectedStatus]}`} />}
+          {selected?.name ?? "Select asset"}
+        </span>
+        <span className="text-cyan-100/50">{open ? "\u25B2" : "\u25BC"}</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-[26rem] max-w-[92vw] rounded-xl border border-cyan-400/30 bg-[#07101f] shadow-xl">
+          <input
+            autoFocus
+            value={q}
+            onChange={(ev) => setQ(ev.target.value)}
+            placeholder="Search name or symbol, e.g. EURUSD, Tesla, gold"
+            className="w-full rounded-t-xl border-b border-cyan-400/20 bg-black/40 px-3 py-2 text-sm outline-none"
+          />
+          <div role="listbox" className="max-h-80 overflow-y-auto py-1">
+            {results.length === 0 && <div className="px-3 py-3 text-sm text-cyan-100/50">No assets match.</div>}
+            {CLASS_ORDER.map((c) => {
+              const group = results.filter((a) => a.assetClass === c);
+              if (group.length === 0) return null;
+              return (
+                <div key={c}>
+                  <div className="sticky top-0 bg-[#07101f] px-3 pb-1 pt-2 text-xs text-cyan-300/80">{CLASS_LABEL[c]}</div>
+                  {group.map((a) => {
+                    const s = getStatus(a);
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={a.id === selectedId}
+                        key={a.id}
+                        onClick={() => choose(a)}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-cyan-400/10 ${
+                          a.id === selectedId ? "bg-cyan-400/10" : ""
+                        }`}
+                      >
+                        <span>
+                          {a.name}
+                          {a.refSymbol && <span className="ml-2 text-xs text-cyan-100/40">{a.refSymbol}</span>}
+                        </span>
+                        <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${BADGE[s]}`}>
+                          {STATUS_LABEL[s]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+          <div className="border-t border-cyan-400/20 px-3 py-2 text-[11px] text-cyan-100/50">
+            Olymp Trade availability is not verified for any listed asset. Live candles come from Binance spot only.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
