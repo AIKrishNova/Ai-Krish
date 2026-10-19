@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState, type RefObject } from "react";
 import { createClient } from "../lib/supabase/client";
 import Logo from "./Logo";
@@ -37,6 +38,7 @@ const P = {
   brain: "M12 3a6 6 0 0 0-6 6c0 2 1 3 2 4v3h8v-3c1-1 2-2 2-4a6 6 0 0 0-6-6z M9 20h6",
   thumb: "M7 11v9H4v-9z M7 11l4-7c1.6 0 2.6 1.2 2.1 3L12 11h6a2 2 0 0 1 2 2.3l-1 6A2 2 0 0 1 17 21H7",
   refresh: "M20 11a8 8 0 1 0-2 6 M20 4v7h-7",
+  history: "M12 7v5l3 2 M4 12a8 8 0 1 0 2.5-5.8 M4 4v4h4",
 } as const;
 export type IconName = keyof typeof P;
 
@@ -81,6 +83,7 @@ type Props = {
 
 export default function Sidebar(p: Props) {
   const [busy, setBusy] = useState(false);
+  const router = useRouter();
   const c = p.collapsed;
 
   async function signOut() {
@@ -142,6 +145,7 @@ export default function Sidebar(p: Props) {
         <nav className="space-y-0.5">
           {nav("home", "Home", { active: true, onClick: () => { p.onNew(); p.onClose(); } })}
           {nav("chat", "Chats", { badge: p.chats.length, onClick: () => { p.searchRef.current?.focus(); } })}
+          {nav("history", "History", { onClick: () => { router.push("/history"); p.onClose(); } })}
           {nav("image", "Image Studio", { soon: true })}
           {nav("file", "Files & Documents", { soon: true })}
           {nav("tools", "AI Tools", { soon: true })}

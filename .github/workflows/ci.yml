@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed so the secret scan can read history
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Secret scan (file names only, never prints values)
+        run: bash scripts/check-secrets.sh --history
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check .env.example lists every variable the code reads
+        run: bash scripts/check-env.sh
+
+      - name: Lint (does not block yet)
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+        env:
+          # Public placeholders so the build can run. No real values are used or needed.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-publishable-key

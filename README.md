@@ -1,39 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI KRISH
 
-## Getting Started
+A private, personal AI assistant: chat with streaming replies, voice in and out, photo and document questions, and saved chat history. Built with Next.js, Supabase (sign-in and chat history) and several AI providers behind server-side API routes.
 
-First, run the development server:
+> This repository is private. Keys never live here: they stay in `.env.local` on your computer and in your host's Environment Variables.
+
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone git@github.com:<your-github-username>/ai-krish.git
+cd ai-krish
+bash scripts/setup-macos.sh          # Mac    (Windows: see INSTALL.md)
+# edit .env.local and add your own keys, then:
+npm run dev                          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Full steps for every device: [INSTALL.md](INSTALL.md).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## What works where
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Device | How you use it | Works | Limits |
+|---|---|---|---|
+| Mac | Browser, installed web app, or run locally | Everything | Safari's "Add to Dock" needs a recent macOS and Safari; Chrome and Edge can install it on any supported Mac |
+| Windows | Browser, installed web app (Chrome or Edge), or run locally | Everything | Needs Node 20+ only if you run it locally |
+| iPhone / iPad | Safari, then Share, then Add to Home Screen | Chat, history, photos, documents, spoken replies | Speech recognition is less reliable on iOS. "Hey Krish" only listens while the page is open on screen. No background listening. It is a web app, not a native app |
+| Android | Chrome, then menu, then Install app | Same as above | No background listening. It is a web app, not a native app |
 
-## Learn More
+Phones and tablets use the hosted web address (HTTPS). Microphone access in browsers needs HTTPS or `localhost`.
 
-To learn more about Next.js, take a look at the following resources:
+## Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Script | Purpose |
+|---|---|
+| `scripts/setup-macos.sh` / `scripts/setup-windows.ps1` | Install dependencies and create `.env.local` on a new computer |
+| `scripts/update.sh` | Pull the latest committed version safely |
+| `scripts/backup.sh` | Secret scan, list unsaved work, optional push, snapshot without secrets |
+| `scripts/check-secrets.sh` | Look for keys or env files before you commit |
+| `scripts/check-env.sh` | Make sure `.env.example` lists every variable the code reads |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Documents
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
-## Photo and camera analysis
-See [docs/IMAGE-ANALYSIS.md](docs/IMAGE-ANALYSIS.md) for setup, limits, tests and deployment. Copy `.env.example` to `.env.local` and fill in your own keys.
+[INSTALL.md](INSTALL.md) · [DEPLOYMENT.md](DEPLOYMENT.md) · [SECURITY.md](SECURITY.md) · [docs/AUTH.md](docs/AUTH.md)
