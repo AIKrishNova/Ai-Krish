@@ -1,0 +1,84 @@
+"use client";
+import { useRef, useState } from "react";
+
+type Msg = { role: "user" | "jarvis"; text: string };
+
+export default function Home() {
+  const [messages, setMessages] = useState<Msg[]>([
+    { role: "jarvis", text: "Hello, I am Jarvis. Type a message or tap the mic." },
+  ]);
+  const [input, setInput] = useState("");
+  const [listening, setListening] = useState(false);
+  const recRef = useRef<any>(null);
+
+  function speak(text: string) {
+    const u = new SpeechSynthesisUtterance(text);
+    window.speechSynthesis.speak(u);
+  }
+
+  function send(text: string) {
+    if (!text.trim()) return;
+    const reply = "You said: " + text;
+    setMessages((m) => [...m, { role: "user", text }, { role: "jarvis", text: reply }]);
+    speak(reply);
+    setInput("");
+  }
+
+  function toggleMic() {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      alert("Voice input is not supported in this browser. Try Safari or Chrome.");
+      return;
+    }
+    if (listening) {
+      recRef.current?.stop();
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.onresult = (e: any) => send(e.results[0][0].transcript);
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recRef.current = rec;
+    rec.start();
+    setListening(true);
+  }
+
+  return (
+    <main className="mx-auto flex h-screen max-w-2xl flex-col p-4 font-sans">
+      <h1 className="mb-3 text-2xl font-bold">JARVIS</h1>
+      <div className="flex-1 space-y-2 overflow-y-auto rounded border p-3">
+        {messages.map((m, i) => (
+          <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
+            <span
+              className={
+                "inline-block rounded-lg px-3 py-2 " +
+                (m.role === "user" ? "bg-blue-600 text-white" : "bg-gray-200 text-black")
+              }
+            >
+              {m.text}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex gap-2">
+        <input
+          className="flex-1 rounded border p-2 text-black"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && send(input)}
+          placeholder="Type a message..."
+        />
+        <button onClick={() => send(input)} className="rounded bg-black px-4 text-white">
+          Send
+        </button>
+        <button
+          onClick={toggleMic}
+          className={"rounded px-4 text-white " + (listening ? "bg-red-600" : "bg-green-600")}
+        >
+          {listening ? "Stop" : "Mic"}
+        </button>
+      </div>
+    </main>
+  );
+}
