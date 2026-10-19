@@ -1,0 +1,109 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetRateLimits } from "../lib/security";
+import { JPEG, PDF, PNG, formWith } from "./helpers";
+
+const analyze = vi.hoisted(() => vi.fn());
+vi.mock("../lib/ai/imageAnalysis", () => ({ analyzeImages: analyze }));
+const session = vi.hoisted(() => vi.fn());
+vi.mock("../lib/auth", () => ({ requireUser: session }));
+
+import { POST } from "../app/api/analyze/route";
+
+const call = (form: FormData, headers: Record<string, string> = { "x-krish-pass": "secret" }) =>
+  POST(new Request("http://localhost/api/analyze", { method: "POST", body: form, headers }));
+
+async function lines(res: Response) {
+  return (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+}
+
+beforeEach(() => {
+  resetRateLimits();
+  analyze.mockReset();
+  session.mockReset();
+  session.mockResolvedValue({ ok: true, user: { id: "u1", email: "a@b.co" } });
+});
+afterEach(() => vi.unstubAllEnvs());
+
+describe("POST /api/analyze", () => {
+  it("rejects signed-out requests", async () => {
+    session.mockResolvedValue({ ok: false, status: 401, error: "locked" });
+    const res = await call(formWith([{ name: "a.png", data: PNG }]));
+    expect(res.status).toBe(401);
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 when sign-in is not configured", async () => {
+    session.mockResolvedValue({ ok: false, status: 503, error: "Sign-in is not configured on the server." });
+    const res = await call(formWith([{ name: "a.png", data: PNG }]));
+    expect(res.status).toBe(503);
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("asks for an image when none is attached", async () => {
+    const res = await call(formWith([], { question: "hi" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/Attach at least one image/);
+  });
+
+  it("returns useful reasons when no file is usable", async () => {
+    const res = await call(formWith([{ name: "notes.pdf", data: PDF }]));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/notes\.pdf/);
+    expect(body.skipped[0].reason).toMatch(/images only/);
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized requests with 413", async () => {
+    const res = await call(formWith([{ name: "a.png", data: PNG }]), { "x-krish-pass": "secret", "content-length": "9000000" });
+    expect(res.status).toBe(413);
+  });
+
+  it("streams status then a result, passing the question, details and images to the analysis", async () => {
+    analyze.mockImplementation(async (i: { emit: (m: string) => void }) => {
+      i.emit("Analysing the image...");
+      return { ok: true, reply: "Answer: a cat", provider: "gemini", model: "m", mode: "standard", analyzed: ["a.png"] };
+    });
+    const form = formWith([{ name: "a.png", data: PNG }, { name: "bad.pdf", data: PDF }, { name: "b.jpg", data: JPEG }], {
+      question: "What is this?",
+      context: "It is my pet",
+      think: "1",
+      history: JSON.stringify([{ role: "user", text: "hello" }]),
+    });
+    const out = await lines(await call(form));
+    expect(out[0]).toMatchObject({ type: "status" });
+    expect(out.some((l) => l.message === "Analysing the image...")).toBe(true);
+    const result = out[out.length - 1];
+    expect(result).toMatchObject({ type: "result", reply: "Answer: a cat", provider: "gemini" });
+    expect(result.skipped).toEqual([{ file: "bad.pdf", reason: expect.stringMatching(/images only/) }]);
+    const arg = analyze.mock.calls[0][0];
+    expect(arg.question).toBe("What is this?");
+    expect(arg.userData).toBe("It is my pet");
+    expect(arg.deep).toBe(true);
+    expect(arg.images.map((x: { name: string }) => x.name)).toEqual(["a.png", "b.jpg"]);
+    expect(arg.history).toEqual([{ role: "user", text: "hello" }]);
+  });
+
+  it("passes an honest failure through instead of a fake answer", async () => {
+    analyze.mockResolvedValue({ ok: false, code: "no_vision_model", error: "image was NOT analysed" });
+    const out = await lines(await call(formWith([{ name: "a.png", data: PNG }])));
+    expect(out[out.length - 1]).toMatchObject({ type: "error", code: "no_vision_model", error: expect.stringMatching(/NOT analysed/) });
+  });
+
+  it("turns unexpected crashes into an error line", async () => {
+    analyze.mockRejectedValue(new Error("boom"));
+    const out = await lines(await call(formWith([{ name: "a.png", data: PNG }])));
+    expect(out[out.length - 1]).toMatchObject({ type: "error", code: "server_error" });
+  });
+
+  it("rate limits repeated requests", async () => {
+    vi.stubEnv("ANALYZE_RATE_PER_MIN", "2");
+    analyze.mockResolvedValue({ ok: true, reply: "r", provider: "p", model: "m", mode: "standard", analyzed: [] });
+    const f = () => formWith([{ name: "a.png", data: PNG }]);
+    expect((await call(f())).status).toBe(200);
+    expect((await call(f())).status).toBe(200);
+    const third = await call(f());
+    expect(third.status).toBe(429);
+    expect(third.headers.get("Retry-After")).toBeTruthy();
+  });
+});

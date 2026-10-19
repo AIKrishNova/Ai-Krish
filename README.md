@@ -61,3 +61,13 @@ Start the backend, then open http://127.0.0.1:8000/ui
 The backend has no login. Run it only on 127.0.0.1 (the default) and do not expose it to the internet, or anyone could spend your NVIDIA quota.
 
 `backend/app/updater/manager.py` is a command-line tool that shows a diff, makes a backup and asks for approval before changing a file. It is not exposed over the web.
+
+## Web app (`web/`)
+
+`web/` holds the Next.js app (chat, history, alerts, sign-in). It is separate from the Python backend above and has its own settings file.
+
+1. `cd web`
+2. Copy `.env.example` to `.env.local` and fill in your own values. Never commit `.env.local`.
+3. `npm install` then `npm run dev`
+
+More detail: `web/INSTALL.md` (setup on each device), `web/DEPLOYMENT.md` (hosting) and `web/SECURITY.md`.

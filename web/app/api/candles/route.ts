@@ -1,0 +1,65 @@
+import { requireUser } from "../../../lib/auth";
+import { NextResponse } from "next/server";
+import { getBinanceCatalogue } from "../../../lib/binanceCatalogue";
+
+
+const BASE = "https://data-api.binance.vision/api/v3/klines";
+
+const INTERVAL_MS: Record<string, number> = {
+  "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
+  "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000,
+};
+
+export async function GET(req: Request) {
+  const session = await requireUser();
+  if (!session.ok) return Response.json({ error: session.error }, { status: session.status });
+  const u = new URL(req.url);
+  const symbol = (u.searchParams.get("symbol") ?? "").toUpperCase();
+  const interval = u.searchParams.get("interval") ?? "1m";
+  const limit = Math.min(Math.max(Number(u.searchParams.get("limit") ?? 500) || 500, 2), 1000);
+
+  if (!/^[A-Z0-9]{5,20}$/.test(symbol) || !(interval in INTERVAL_MS)) {
+    return NextResponse.json({ error: "Invalid symbol or interval." }, { status: 400 });
+  }
+
+  // The symbol must be a currently trading Binance spot market from the server-side catalogue.
+  const catalogue = await getBinanceCatalogue();
+  if (!catalogue.snapshot) {
+    return NextResponse.json(
+      { error: "Could not verify this symbol because the Binance catalogue is unavailable. Try again shortly." },
+      { status: 503 }
+    );
+  }
+  if (!catalogue.snapshot.symbols.has(symbol)) {
+    return NextResponse.json({ error: "Not a supported Binance spot market: " + symbol + "." }, { status: 404 });
+  }
+
+  try {
+    const res = await fetch(`${BASE}?symbol=${symbol}&interval=${interval}&limit=${limit}`, { cache: "no-store" });
+    if (!res.ok) {
+      const msg = res.status === 400 ? "Symbol not found on Binance spot." : `Provider returned ${res.status}.`;
+      return NextResponse.json({ error: msg }, { status: 502 });
+    }
+    const raw: (string | number)[][] = await res.json();
+    const candles = raw.map((k) => ({
+      time: Math.floor(Number(k[0]) / 1000),
+      open: Number(k[1]),
+      high: Number(k[2]),
+      low: Number(k[3]),
+      close: Number(k[4]),
+      volume: Number(k[5]),
+    }));
+    const last = candles[candles.length - 1];
+    const fresh = !!last && Date.now() - last.time * 1000 < INTERVAL_MS[interval] * 2;
+    return NextResponse.json({
+      provider: "Binance spot market data",
+      symbol,
+      interval,
+      fetchedAt: Date.now(),
+      fresh,
+      candles,
+    });
+  } catch {
+    return NextResponse.json({ error: "Could not reach the price feed." }, { status: 502 });
+  }
+}

@@ -1,0 +1,13 @@
+# --- AI KRISH repo additions ---
+# The blanket ".env*" rule above would also hide the safe example file, so allow it back in:
+!.env.example
+# Backups, archives, logs and editor leftovers
+*.bak
+*.bak-*
+*.old
+*.old.txt
+*.zip
+*.tar.gz
+*.log
+.idea/
+.vscode/
