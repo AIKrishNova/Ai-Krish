@@ -279,7 +279,7 @@ export default function Alerts() {
     : `CONFIRMED ${c!.direction} on the candle that opened at ${new Date(c!.candleTime).toLocaleTimeString()}`;
 
   return (
-    <div className="min-h-screen bg-[#050b18] p-6 text-cyan-50"
+    <div className="min-h-dvh bg-[#050b18] p-6 text-cyan-50"
       style={{ backgroundImage: "radial-gradient(circle at 30% 10%, #0b2a4a 0%, #050b18 60%)" }}>
       <h1 className="text-2xl font-bold tracking-[0.3em] text-cyan-300">AI KRISH MARKET ALERTS</h1>
       <p className="mb-1 text-xs text-cyan-100/60">Strategy: {STRATEGY.version}. Alerts only. Manual review only. No automatic trading.</p>

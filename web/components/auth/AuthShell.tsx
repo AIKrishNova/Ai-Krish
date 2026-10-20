@@ -11,10 +11,10 @@ const FEATURES: { text: string; icon: ReactNode }[] = [
 
 export default function AuthShell({ children }: { children: ReactNode }) {
   return (
-    <div className="relative min-h-screen overflow-hidden bg-white text-slate-900">
+    <div className="relative min-h-dvh overflow-hidden bg-white text-slate-900">
       <div aria-hidden className="pointer-events-none absolute -left-40 -top-40 h-[26rem] w-[26rem] rounded-full bg-violet-100/70 blur-3xl" />
       <div aria-hidden className="pointer-events-none absolute -bottom-48 right-0 h-[22rem] w-[22rem] rounded-full bg-sky-100/60 blur-3xl" />
-      <div className="relative mx-auto grid min-h-screen w-full max-w-6xl items-center gap-8 px-5 py-8 sm:px-8 lg:grid-cols-2 lg:gap-16">
+      <div className="relative mx-auto grid min-h-dvh w-full max-w-6xl items-center gap-8 px-5 py-8 sm:px-8 lg:grid-cols-2 lg:gap-16">
         <aside className="flex flex-col gap-8 lg:min-h-[34rem] lg:justify-between">
           <div className="flex justify-center lg:hidden"><Logo size="medium" /></div>
           <div>
