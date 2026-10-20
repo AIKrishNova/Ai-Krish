@@ -60,7 +60,7 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white to-slate-50 text-slate-900">
+    <div className="min-h-dvh bg-gradient-to-b from-white to-slate-50 text-slate-900">
       <header className="sticky top-0 z-10 border-b border-slate-100 bg-white/85 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
           <Link href="/" className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-100 ${FOCUS}`}>

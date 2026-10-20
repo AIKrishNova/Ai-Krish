@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 const AUTH_PAGES = ["/login", "/signup", "/forgot-password"];
-const OPEN = ["/reset-password", "/verify", "/auth", "/manifest.webmanifest", "/pwa-192", "/pwa-512", "/apple-icon", "/favicon.ico"];
+const OPEN = ["/reset-password", "/verify", "/auth", "/manifest.webmanifest", "/pwa-192", "/pwa-512", "/apple-icon", "/favicon.ico", "/sw.js", "/offline.html"];
 const starts = (p: string, list: string[]) => list.some((x) => p === x || p.startsWith(x + "/"));
 
 export async function updateSession(request: NextRequest) {
