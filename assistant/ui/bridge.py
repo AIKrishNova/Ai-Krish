@@ -10,6 +10,18 @@ class Bridge:
         self.bus = bus
         self.memory = ConversationMemory()
         self.task_mgr = TaskManager()
+        # lazy load audio
+        try:
+            from ..audio.transcriber import Transcriber
+            from ..audio.tts import TTS
+            from ..audio.listener import MicListener
+            self.transcriber = Transcriber()
+            self.tts = TTS()
+            self.listener = MicListener(self.transcriber, self.tts, self, bus)
+        except Exception as e:
+            print(f"[Bridge] audio not available: {e}")
+            self.listener = None
+            self.tts = None
 
     def handle_text(self, text: str):
         if not text or not text.strip():
@@ -60,18 +72,26 @@ class Bridge:
             print(f"[BUS emit fail] {e}")
         
         print(f"[Krish] -> {result['message']}")
+        if self.tts:
+            try: self.tts.speak(result['message'])
+            except: pass
         return result
 
     def listen_and_handle(self, text=None):
         if text:
             return self.handle_text(text)
-        return self.handle_text("hello")
+        # start mic loop if available
+        if self.listener and not self.listener.running:
+            self.listener.start()
+        return self.handle_text("hello - I am listening, type something")
 
     def start_listening(self):
         return self.listen_and_handle()
 
     def stop(self):
         print("[Bridge] stop called")
+        if self.listener:
+            self.listener.stop()
         self.task_mgr.cancel()
         try: self.bus.task_cancelled.emit()
         except: pass
