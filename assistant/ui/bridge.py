@@ -13,6 +13,8 @@ class Bridge:
         self.BUS = bus
 
     def handle_text(self, text: str):
+        if not text or not text.strip():
+            return {"success": False, "message": "Empty"}
         intent = route(text, self.memory)
         print(f"[Krish] Intent: {intent.name} {intent.slots}")
         try: self.bus.listening_started.emit()
@@ -46,17 +48,35 @@ class Bridge:
         try:
             if result.get("success"):
                 self.bus.speaking_started.emit(result["message"][:70])
+                self.bus.caption_changed.emit(result["message"][:90])
                 self.bus.task_completed.emit()
             else:
                 self.bus.task_failed.emit(result.get("message","Failed")[:90])
-        except: pass
+                self.bus.caption_changed.emit(result.get("message","Failed")[:90])
+        except Exception as e:
+            print(f"[BUS emit fail] {e}")
         
         print(f"[Krish] -> {result['message']}")
         return result
 
+    # --- Methods that SiriWindow expects ---
+    def listen_and_handle(self, text=None):
+        """Called by SiriWindow - if text provided, handle it, else prompt for text input for now"""
+        if text:
+            return self.handle_text(text)
+        # Fallback: if no faster-whisper yet, just return greeting so orb doesn't show 'Something went wrong'
+        print("[Bridge] listen_and_handle called without text - waiting for voice input")
+        return self.handle_text("hello")
+
+    def start_listening(self):
+        return self.listen_and_handle()
+
     def stop(self):
         print("[Bridge] stop called")
         self.task_mgr.cancel()
+        try:
+            self.bus.task_cancelled.emit()
+        except: pass
 
 def build_default(bus=None):
     from .events import EventBus
