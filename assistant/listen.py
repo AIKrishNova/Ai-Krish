@@ -14,6 +14,12 @@ from assistant.commands import WAKE
 SAMPLE_RATE = 16000
 BLOCK = 1600  # 0.1 second of audio per block
 DEFAULT_MODEL = "base.en"
+# Words the assistant understands. Whisper uses this as a spelling hint only.
+COMMAND_HINT = (
+    "Open Safari. Open Gmail. Open Chrome. Open Finder. Open Downloads. "
+    "Take a note. List notes. Copy latest note. Remind me in 10 minutes to call mom. "
+    "Set a timer for 5 minutes. List reminders. Speak on. Speak off. Help."
+)
 VENV_HINT = "~/.ai-krish/venv/bin/python -m assistant"
 MIC_HINT = (
     "Check that Terminal is allowed to use the microphone "
@@ -180,7 +186,11 @@ class Listener:
         try:
             audio = np.concatenate(frames).reshape(-1).astype("float32")
             segments, _info = self._model.transcribe(
-                audio, language="en", beam_size=1, condition_on_previous_text=False
+                audio,
+                language="en",
+                beam_size=1,
+                condition_on_previous_text=False,
+                initial_prompt=COMMAND_HINT,
             )
             text = clean_transcript(" ".join(segment.text for segment in segments))
         except Exception as exc:
