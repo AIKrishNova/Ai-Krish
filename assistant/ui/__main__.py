@@ -19,8 +19,6 @@ def main():
         ]
         for ms, fn in seq:
             QTimer.singleShot(ms, fn)
-    elif "--debug" in sys.argv:
-        win.show()
     else:
         win.show()
     sys.exit(app.exec())
