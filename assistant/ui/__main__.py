@@ -1,27 +1,38 @@
-from PySide6.QtWidgets import QApplication
+"""Floating assistant.  Run:  python -m assistant.ui   (add --demo to preview the animation)"""
 import sys
-from .main_window import SiriWindow
-from .events import BUS
+
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+
+from assistant.ui.bridge import build_default
+from assistant.ui.events import EventBus
+from assistant.ui.main_window import SiriWindow
+
 
 def main():
     app = QApplication(sys.argv)
-    win = SiriWindow()
-    if "--test-events" in sys.argv:
-        win.show()
-        from PySide6.QtCore import QTimer
-        seq = [
-            (500, lambda: BUS.wake_detected.emit()),
-            (1500, lambda: BUS.listening_started.emit()),
-            (2000, lambda: [BUS.audio_level.emit(v/10) for v in [2,5,8,6,9]]),
-            (3000, lambda: BUS.processing_started.emit()),
-            (4500, lambda: BUS.speaking_started.emit("Opened Safari")),
-            (6000, lambda: BUS.task_completed.emit("Done")),
+    bus = EventBus()
+    bridge = build_default(bus)
+    window = SiriWindow(bus, bridge)
+    window.quit_requested.connect(app.quit)
+    app.aboutToQuit.connect(bridge.stop)
+    if "--demo" in sys.argv:
+        # Preview only: it emits the real signals, but no microphone or command is involved.
+        steps = [
+            (300, bus.wake_detected.emit),
+            (1200, bus.listening_started.emit),
+            (1300, lambda: [bus.audio_level.emit(v / 10.0) for v in (2, 5, 8, 6, 9)]),
+            (3000, bus.processing_started.emit),
+            (4500, bus.speaking_started.emit),
+            (6000, bus.speaking_finished.emit),
+            (6100, bus.task_completed.emit),
         ]
-        for ms, fn in seq:
+        for ms, fn in steps:
             QTimer.singleShot(ms, fn)
     else:
-        win.show()
+        window.start_listening()
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()
