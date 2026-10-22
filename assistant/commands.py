@@ -20,7 +20,7 @@ Clipboard:
 Open things (approved list only):
   open safari  |  open gmail  |  open downloads  |  open https://example.com
 Other: help, exit
-Tip: you can start with "Hey Krish," if you like. Voice is not added yet."""
+Tip: you can start with "Hey Krish," if you like. Type "speak on" to hear replies."""
 
 
 @dataclass
