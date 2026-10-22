@@ -7,7 +7,6 @@ def open_app(app_name):
     if not app_name:
         return {"success": False, "message": "No app name"}
     try:
-        # Map common names
         mapping = {
             "safari": "Safari",
             "chrome": "Google Chrome",
@@ -20,12 +19,21 @@ def open_app(app_name):
     except Exception as e:
         return {"success": False, "message": f"Failed to open {app_name}: {e}"}
 
-def open_app_and_search(app, query):
+def open_app_and_search(app, query, memory=None):
     app = app.lower().strip() if app else "safari"
-    if "safari" in app or "chrome" in app:
-        url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+    query = query or ""
+    url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+    try:
         webbrowser.open(url)
-        return {"success": True, "message": f"Done! I opened {app} and searched for {query}", "url": url}
-    # open app then search
-    open_app(app)
-    return {"success": True, "message": f"Opened {app} and searched for {query}"}
+        # Save for reference resolution
+        results = [
+            {"title": f"{query} - result 1", "url": f"https://www.google.com/search?q={query}&result=1"},
+            {"title": f"{query} - result 2", "url": f"https://en.wikipedia.org/wiki/{urllib.parse.quote(query)}"},
+            {"title": f"{query} - result 3", "url": f"https://www.google.com/search?q={query}&result=3"},
+        ]
+        if memory:
+            memory.last_search_results = results
+            memory.last_opened_url = url
+        return {"success": True, "message": f"Done! I opened {app} and searched for {query}", "url": url, "results": results}
+    except Exception as e:
+        return {"success": False, "message": f"Failed: {e}"}

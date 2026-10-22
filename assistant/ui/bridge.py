@@ -33,7 +33,7 @@ class Bridge:
         elif intent.name == "open_app":
             result = open_app(intent.slots.get("app",""))
         elif intent.name == "open_app_and_search":
-            result = open_app_and_search(intent.slots.get("app","safari"), intent.slots.get("query",""))
+            result = open_app_and_search(intent.slots.get("app","safari"), intent.slots.get("query",""), self.memory)
         elif intent.name == "search_web":
             result = browser_handler.search_web(intent.slots.get("query",""), self.memory)
         elif intent.name == "open_search_result":
@@ -65,7 +65,6 @@ class Bridge:
     def listen_and_handle(self, text=None):
         if text:
             return self.handle_text(text)
-        print("[Bridge] listen_and_handle called without text")
         return self.handle_text("hello")
 
     def start_listening(self):
