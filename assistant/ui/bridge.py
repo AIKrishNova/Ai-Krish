@@ -1,6 +1,6 @@
 from ..conversation.memory import ConversationMemory
 from ..intents.router import route
-from ..handlers import apps as apps_handler
+from ..handlers.apps import open_app, open_app_and_search
 from ..handlers import browser as browser_handler
 from ..handlers import conversation as conv_handler
 from ..tasks.manager import TaskManager
@@ -23,9 +23,9 @@ def handle_text(text: str):
     elif intent.name in ("casual", "unsupported"):
         result = conv_handler.handle_casual(text, memory) if intent.name=="casual" else conv_handler.handle_unsupported(text, memory)
     elif intent.name == "open_app":
-        result = apps_handler.open_app(intent.slots.get("app",""))
+        result = open_app(intent.slots.get("app",""))
     elif intent.name == "open_app_and_search":
-        result = apps_handler.open_app_and_search(intent.slots.get("app","safari"), intent.slots.get("query",""))
+        result = open_app_and_search(intent.slots.get("app","safari"), intent.slots.get("query",""))
     elif intent.name == "search_web":
         result = browser_handler.search_web(intent.slots.get("query",""), memory)
     elif intent.name == "open_search_result":
@@ -47,6 +47,5 @@ def handle_text(text: str):
     print(f"[Krish] -> {result['message']}")
     return result
 
-# Keep old build_default for __main__.py compatibility
 def build_default():
     return {"handle_text": handle_text, "memory": memory}
