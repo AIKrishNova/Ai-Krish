@@ -10,7 +10,6 @@ class Bridge:
         self.bus = bus
         self.memory = ConversationMemory()
         self.task_mgr = TaskManager()
-        self.BUS = bus
 
     def handle_text(self, text: str):
         if not text or not text.strip():
@@ -18,6 +17,8 @@ class Bridge:
         intent = route(text, self.memory)
         print(f"[Krish] Intent: {intent.name} {intent.slots}")
         try: self.bus.listening_started.emit()
+        except: pass
+        try: self.bus.processing_started.emit()
         except: pass
 
         if intent.name == "stop":
@@ -45,27 +46,26 @@ class Bridge:
         self.memory.add("user", text, intent.name, None)
         self.memory.add("assistant", result.get("message",""), intent.name, result)
 
+        msg = result.get("message","")[:90]
         try:
             if result.get("success"):
-                self.bus.speaking_started.emit(result["message"][:70])
-                self.bus.caption_changed.emit(result["message"][:90])
+                self.bus.caption_changed.emit(msg)
+                self.bus.speaking_started.emit()
+                self.bus.speaking_finished.emit()
                 self.bus.task_completed.emit()
             else:
-                self.bus.task_failed.emit(result.get("message","Failed")[:90])
-                self.bus.caption_changed.emit(result.get("message","Failed")[:90])
+                self.bus.caption_changed.emit(msg)
+                self.bus.task_failed.emit(msg)
         except Exception as e:
             print(f"[BUS emit fail] {e}")
         
         print(f"[Krish] -> {result['message']}")
         return result
 
-    # --- Methods that SiriWindow expects ---
     def listen_and_handle(self, text=None):
-        """Called by SiriWindow - if text provided, handle it, else prompt for text input for now"""
         if text:
             return self.handle_text(text)
-        # Fallback: if no faster-whisper yet, just return greeting so orb doesn't show 'Something went wrong'
-        print("[Bridge] listen_and_handle called without text - waiting for voice input")
+        print("[Bridge] listen_and_handle called without text")
         return self.handle_text("hello")
 
     def start_listening(self):
@@ -74,8 +74,7 @@ class Bridge:
     def stop(self):
         print("[Bridge] stop called")
         self.task_mgr.cancel()
-        try:
-            self.bus.task_cancelled.emit()
+        try: self.bus.task_cancelled.emit()
         except: pass
 
 def build_default(bus=None):
