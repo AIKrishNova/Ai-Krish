@@ -12,12 +12,15 @@ task_mgr = TaskManager()
 def handle_text(text: str):
     intent = route(text, memory)
     print(f"[Krish] Intent: {intent.name} {intent.slots}")
-    BUS.listening_started.emit()
+    try:
+        BUS.listening_started.emit()
+    except: pass
 
     if intent.name == "stop":
         task_mgr.cancel()
         result = conv_handler.handle_stop(text, memory)
-        BUS.task_cancelled.emit()
+        try: BUS.task_cancelled.emit()
+        except: pass
     elif intent.name == "greet":
         result = conv_handler.handle_greet(text, memory)
     elif intent.name in ("casual", "unsupported"):
@@ -38,14 +41,20 @@ def handle_text(text: str):
     memory.add("user", text, intent.name, None)
     memory.add("assistant", result.get("message",""), intent.name, result)
 
-    if result.get("success"):
-        BUS.speaking_started.emit(result["message"][:70])
-        BUS.task_completed.emit(result["message"][:70])
-    else:
-        BUS.task_failed.emit(result.get("message","Failed")[:90])
+    try:
+        if result.get("success"):
+            BUS.speaking_started.emit(result["message"][:70])
+            BUS.task_completed.emit()
+        else:
+            BUS.task_failed.emit(result.get("message","Failed")[:90])
+    except: pass
     
     print(f"[Krish] -> {result['message']}")
     return result
 
-def build_default():
-    return {"handle_text": handle_text, "memory": memory}
+def build_default(bus=None):
+    # accept bus argument from __main__.py, use global BUS if not given
+    global BUS
+    if bus is not None:
+        BUS = bus
+    return {"handle_text": handle_text, "memory": memory, "bus": BUS}
