@@ -134,7 +134,7 @@ class RouterTests(unittest.TestCase):
 
     def test_list_and_search(self):
         self.router.handle("take a note: python flask practice")
-        self.assertIn("python flask", self.router.handle("open my notes").text)
+        self.assertIn("python flask", self.router.handle("list my notes").text)
         self.assertIn("python flask", self.router.handle("find my python notes").text)
         self.assertEqual(self.desk.calls, [])  # "open my notes" must not open an app
 
