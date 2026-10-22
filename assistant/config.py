@@ -61,3 +61,31 @@ FOLDERS = {
     "documents": "Documents",
     "downloads": "Downloads",
 }
+
+
+# Extra approved Mac apps (all confirmed installed on this Mac).
+APPS.update({
+    "messages": {"mac": "Messages"},
+    "reminders": {"mac": "Reminders"},
+    "calendar": {"mac": "Calendar"},
+    "mail": {"mac": "Mail"},
+})
+
+# Spoken or short names -> the approved name above. Unknown names are still refused.
+ALIASES = {
+    "notes": "apple notes",
+    "note": "apple notes",
+    "notes app": "apple notes",
+    "google chrome": "chrome",
+    "chrome browser": "chrome",
+    "web browser": "safari",
+    "browser": "safari",
+    "messages app": "messages",
+    "imessage": "messages",
+    "text messages": "messages",
+    "reminder": "reminders",
+    "email": "mail",
+    "vs code": "vscode",
+    "visual studio code": "vscode",
+    "download": "downloads",
+}

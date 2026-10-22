@@ -183,6 +183,7 @@ class Router:
         if target.lower().startswith(("http://", "https://")):
             return Reply(self.desktop.open_website(target).message)
         key = clean_name(target)
+        key = config.ALIASES.get(key, key)
         if key in config.SITES:
             return Reply(self.desktop.open_website(key).message)
         if key in config.APPS:
