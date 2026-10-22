@@ -139,7 +139,7 @@ class Listener:
                 )
         return True, ""
 
-    def listen_once(self, show):
+    def listen_once(self, show, on_level=None):
         """Record once, turn it into text. 'show' is a function that prints a message."""
         ok, why = self.check_libraries()
         if not ok:
@@ -172,6 +172,11 @@ class Listener:
                     data, _overflow = stream.read(BLOCK)
                     frames.append(data.copy())
                     level = float(np.sqrt(np.mean(data ** 2)))
+                    if on_level is not None:
+                        try:
+                            on_level(level)
+                        except Exception:
+                            pass
                     if endpointer.feed(level) != Endpointer.CONTINUE:
                         break
         except KeyboardInterrupt:

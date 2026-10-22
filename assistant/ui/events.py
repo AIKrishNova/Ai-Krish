@@ -15,6 +15,7 @@ class EventBus(QObject):
     task_completed = Signal()
     task_failed = Signal(str)              # reason
     task_cancelled = Signal()
+    caption_changed = Signal(str)          # one short line for the orb
     state_changed = Signal(str)            # new orb state
 
     def __init__(self):
