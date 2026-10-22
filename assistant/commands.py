@@ -22,6 +22,9 @@ Open things (approved list only):
 Voice:
   speak on  |  speak off  |  stop speaking     (spoken replies)
   listen                                       (talk to me; needs the voice libraries)
+Reminders and timers (only while I am running):
+  remind me in 10 minutes to call mom  |  set a timer for 5 minutes
+  list reminders  |  cancel reminder 2  |  cancel all reminders
 Other: help, exit
 Tip: you can start with "Hey Krish," if you like. Type "speak on" to hear replies."""
 

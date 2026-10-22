@@ -5,11 +5,12 @@ from assistant.commands import Router
 from assistant.config import db_path
 from assistant.desktop import Desktop
 from assistant.listen import Listener, is_listen_command, is_stop_listening_command
+from assistant.reminders import Reminders, handle_reminder_command
 from assistant.speech import Speaker, handle_speech_command
 from assistant.storage import NoteStore
 
 
-def process(line, router, speaker):
+def process(line, router, speaker, reminders):
     """Run one command, typed or heard. Returns True if the assistant should quit."""
     handled = handle_speech_command(line, speaker)
     if handled is not None:
@@ -19,6 +20,12 @@ def process(line, router, speaker):
         if say_it:
             speaker.speak(text)
         return False
+    reminder_text = handle_reminder_command(line, reminders)
+    if reminder_text is not None:
+        router.pending = None  # a reminder command cancels any waiting delete question
+        print("krish> " + reminder_text)
+        speaker.speak(reminder_text)
+        return False
     reply = router.handle(line)
     print("krish> " + reply.text)
     if reply.quit:
@@ -27,10 +34,20 @@ def process(line, router, speaker):
     return False
 
 
+def make_notifier(speaker):
+    """Called from a timer thread when a reminder or timer fires."""
+    def notify(text):
+        print("\nkrish> " + text)
+        print("you> ", end="", flush=True)  # bring the prompt back
+        speaker.speak(text)
+    return notify
+
+
 def main():
     speaker = Speaker()
     listener = Listener()
     router = Router(NoteStore(db_path()), Desktop())
+    reminders = Reminders(make_notifier(speaker))
     print("AI Krish assistant v1. Type 'help' for examples, 'exit' to quit.")
     print("Spoken replies are off ('speak on'). Type 'listen' to talk to me.")
     try:
@@ -51,12 +68,13 @@ def main():
                     print("krish> " + result.error)
                     continue
                 print("you (voice)> " + result.text)
-                if process(result.text, router, speaker):
+                if process(result.text, router, speaker, reminders):
                     break
                 continue
-            if process(line, router, speaker):
+            if process(line, router, speaker, reminders):
                 break
     finally:
+        reminders.stop()
         speaker.stop()
 
 
