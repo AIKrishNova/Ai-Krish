@@ -1,6 +1,7 @@
+
 import sys
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QObject, Signal, QTimer
+from PySide6.QtCore import QObject, QTimer
 from .events import EventBus
 from .bridge import build_default
 from .orb_widget import OrbWidget
@@ -25,9 +26,7 @@ class SiriWindow(QObject):
         print("[Window] Orb shown - starting listener")
         if hasattr(self.bridge, 'listener') and self.bridge.listener:
             self.bridge.listener.start()
-        # keep greeting but don't stop
         self.bridge.handle_text("hello")
-        QTimer.singleShot(100, lambda: None)
         return self.app.exec()
 
     def stop(self):
@@ -41,10 +40,7 @@ class SiriWindow(QObject):
 def main():
     bus = EventBus()
     window = SiriWindow(bus)
-    try:
-        sys.exit(window.start_listening())
-    except KeyboardInterrupt:
-        window.stop()
+    sys.exit(window.start_listening())
 
 if __name__ == "__main__":
     main()
