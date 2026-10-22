@@ -57,7 +57,7 @@ class Router:
             (re.compile(r"note\s*:\s*(.+)", flags), self._add_note),
             (re.compile(r"(?:read|show|open|view|get)\s+(?:my\s+)?(?:latest|last|newest)\s+note", flags), self._latest),
             (re.compile(r"(?:read|show|open|view)\s+note\s+#?(\d+)", flags), self._read),
-            (re.compile(r"(?:(?:list|show|open|view)\s+(?:all\s+)?)?(?:my\s+)?notes", flags), self._list),
+            (re.compile(r"(?:(?:list|show|view)\s+(?:all\s+)?)?(?:my\s+)?notes", flags), self._list),
             (re.compile(r"(?:find|search)\s+(?:my\s+)?notes?\s+(?:for\s+|about\s+)?(.+)", flags), self._search),
             (re.compile(r"(?:find|search)\s+(?:for\s+)?(?:my\s+)?(.+?)\s+notes", flags), self._search),
             (re.compile(r"(?:delete|remove)\s+note\s+#?(\d+)", flags), self._delete),
