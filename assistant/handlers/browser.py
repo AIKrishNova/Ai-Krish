@@ -3,7 +3,8 @@ import urllib.parse
 
 def search_web(query, memory=None):
     if not query:
-        return {"success": False, "message": "No query to search"}
+        return {"success": False, "message": "No query to search", "caption": "No query"}
+    query = query.strip()
     url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
     try:
         webbrowser.open(url)
@@ -16,9 +17,15 @@ def search_web(query, memory=None):
         if memory:
             memory.last_search_results = results
             memory.last_opened_url = url
-        return {"success": True, "message": f"Done! I searched for '{query}' and opened Google", "url": url, "results": results}
+        return {
+            "success": True,
+            "message": f"Searching for \"{query}\"",
+            "caption": f"Searching for \"{query}\"",
+            "url": url,
+            "results": results
+        }
     except Exception as e:
-        return {"success": False, "message": f"Search failed: {e}"}
+        return {"success": False, "message": f"Search failed: {e}", "caption": "Search failed"}
 
 def open_search_result(index, memory=None):
     try:
@@ -29,20 +36,33 @@ def open_search_result(index, memory=None):
                 webbrowser.open(target)
                 if memory:
                     memory.last_opened_url = target
-                return {"success": True, "message": f"Opened result {idx+1}: {target}", "url": target}
+                return {
+                    "success": True,
+                    "message": f"Opened result {idx+1}",
+                    "caption": f"Opened Result #{idx+1}",
+                    "url": target
+                }
             else:
-                return {"success": False, "message": f"Result {idx+1} not found, only {len(memory.last_search_results)} results saved"}
-        # fallback
-        return {"success": False, "message": "No previous search results to open. Search first."}
+                return {
+                    "success": False,
+                    "message": f"Result {idx+1} not found",
+                    "caption": f"Result #{idx+1} not found"
+                }
+        return {"success": False, "message": "No previous search results found.", "caption": "No search results"}
     except Exception as e:
-        return {"success": False, "message": f"Failed to open result: {e}"}
+        return {"success": False, "message": f"Failed to open result: {e}", "caption": "Error opening result"}
 
 def summarize_url(url, memory=None):
     target = url or (memory.last_opened_url if memory else None)
     if not target:
-        return {"success": False, "message": "No page to summarize"}
+        return {"success": False, "message": "No page to summarize", "caption": "No active page"}
     try:
         webbrowser.open(target)
-        return {"success": True, "message": f"Summarized {target} - opened in browser for you", "url": target}
+        return {
+            "success": True,
+            "message": f"Summarizing {target}",
+            "caption": "Summarizing page",
+            "url": target
+        }
     except Exception as e:
-        return {"success": False, "message": f"Summarize failed: {e}"}
+        return {"success": False, "message": f"Summarize failed: {e}", "caption": "Summarize failed"}

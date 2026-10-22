@@ -9,37 +9,27 @@ class Intent:
     confidence: float
     raw: str
 
-# Deterministic patterns first — no LLM needed for 80%
-PATTERNS = [
-    (r"^(hey krish|hi|hello|what'?s up|how are you|i'?m bored)$", "greet"),
-    (r"^(stop|cancel|never mind|abort)$", "stop"),
-    (r"open (safari|chrome|notes|【entity-spotify¦canonical_name=spotify】|finder|calendar|reminders)", "open_app"),
-    (r"search for (.+)", "search_web"),
-    (r"open the (second|first|third|\d+)(?:st|nd|rd|th)? result", "open_search_result"),
-    (r"^(summarize it|summarize|what is this|explain this)$", "summarize"),
-    (r"remind me to (.+) (at|tomorrow|today)", "create_reminder"),
-    (r"set (a )?timer for (.+)", "timer"),
-    (r"^(help|what can you do)$", "help"),
-]
-
 def route_deterministic(text: str) -> Optional[Intent]:
     t = text.lower().strip()
-    if re.match(r"^(hey krish|what'?s up|how are you|i'?m bored|hey|hi)$", t):
+    if re.match(r"^(hey krish|what'?s up|how are you|i'?m bored|hey|hi|hello)$", t):
         return Intent("greet", {}, 0.95, text)
     if re.match(r"^(stop|cancel|abort|never mind)$", t):
         return Intent("stop", {}, 0.99, text)
     
-    m = re.search(r"open (safari|chrome|notes|【entity-spotify¦canonical_name=spotify】|finder|calendar|reminders) and search for (.+)", t)
+    m = re.search(r"open ([a-zA-Z0-9\s]+?) and search for (.+)", t)
     if m:
-        return Intent("open_app_and_search", {"app": m.group(1), "query": m.group(2)}, 0.9, text)
+        return Intent("open_app_and_search", {"app": m.group(1).strip(), "query": m.group(2).strip()}, 0.9, text)
     
-    m = re.search(r"open (safari|chrome|notes|【entity-spotify¦canonical_name=spotify】|finder|calendar|reminders|settings|youtube)", t)
+    m = re.search(r"^open ([a-zA-Z0-9\s]+)$", t)
     if m:
-        return Intent("open_app", {"app": m.group(1)}, 0.9, text)
+        app_cand = m.group(1).strip()
+        # avoid matching things like "open the first result"
+        if not app_cand.startswith("the ") and "result" not in app_cand:
+            return Intent("open_app", {"app": app_cand}, 0.9, text)
     
     m = re.search(r"search for (.+)", t)
     if m:
-        return Intent("search_web", {"query": m.group(1)}, 0.85, text)
+        return Intent("search_web", {"query": m.group(1).strip()}, 0.85, text)
     
     m = re.search(r"open the (first|second|third|1st|2nd|3rd|\d+).*result", t)
     if m:
@@ -55,7 +45,7 @@ def route_deterministic(text: str) -> Optional[Intent]:
     
     m = re.search(r"remind me to (.+)", t)
     if m:
-        return Intent("create_reminder", {"text": m.group(1)}, 0.7, text)
+        return Intent("create_reminder", {"text": m.group(1).strip()}, 0.7, text)
     
     return None
 
@@ -100,7 +90,7 @@ def route(text, memory=None):
         # treat as new search with corrected query
         m = re.search(r"i meant (.+)", text.lower())
         if m:
-            return Intent("search_web", {"query": m.group(1), "correction": True}, 0.9, text)
+            return Intent("search_web", {"query": m.group(1).strip(), "correction": True}, 0.9, text)
     if ref and ref["type"] == "search_index":
         return Intent("open_search_result", {"index": ref["index"], "url": ref["url"]}, 0.95, text)
     if ref and ref["type"] == "last_url":

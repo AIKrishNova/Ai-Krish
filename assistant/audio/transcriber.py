@@ -20,3 +20,6 @@ class Transcriber:
             return ""
         segments, _ = self.model.transcribe(path)
         return " ".join([s.text for s in segments]).strip()
+
+    def transcribe(self, path):
+        return self.transcribe_file(path)

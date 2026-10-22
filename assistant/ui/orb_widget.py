@@ -72,6 +72,9 @@ class OrbWidget(QWidget):
     def set_level(self, level):
         self._target_level = om.clamp01(level)
 
+    def set_audio(self, level):
+        self.set_level(level)
+
     def set_quality(self, high):
         self._timer.setInterval(16 if high else 33)
 
