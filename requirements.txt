@@ -1,0 +1,12 @@
+PySide6
+faster-whisper
+openwakeword
+onnxruntime
+pynput
+rumps
+pyobjc-core
+pyobjc-framework-Cocoa
+Pillow
+dateparser
+requests
+pytest
