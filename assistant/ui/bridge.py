@@ -1,6 +1,8 @@
 from ..conversation.memory import ConversationMemory
 from ..intents.router import route
-from ..handlers import apps as apps_handler, browser as browser_handler, conversation as conv_handler
+from ..handlers import apps as apps_handler
+from ..handlers import browser as browser_handler
+from ..handlers import conversation as conv_handler
 from ..tasks.manager import TaskManager
 from .events import BUS
 
@@ -44,3 +46,7 @@ def handle_text(text: str):
     
     print(f"[Krish] -> {result['message']}")
     return result
+
+# Keep old build_default for __main__.py compatibility
+def build_default():
+    return {"handle_text": handle_text, "memory": memory}
