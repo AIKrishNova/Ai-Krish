@@ -19,6 +19,9 @@ Clipboard:
   copy latest note      |  copy note 3  |  copy text: hello
 Open things (approved list only):
   open safari  |  open gmail  |  open downloads  |  open https://example.com
+Voice:
+  speak on  |  speak off  |  stop speaking     (spoken replies)
+  listen                                       (talk to me; needs the voice libraries)
 Other: help, exit
 Tip: you can start with "Hey Krish," if you like. Type "speak on" to hear replies."""
 
