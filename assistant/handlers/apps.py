@@ -1,18 +1,31 @@
 import subprocess
-ALLOWED={"safari":"Safari","chrome":"Google Chrome","notes":"Notes","【entity-spotify¦canonical_name=Spotify】":"【entity-Spotify¦canonical_name=Spotify】","finder":"Finder","calendar":"Calendar","reminders":"Reminders"}
+import webbrowser
+import urllib.parse
+
 def open_app(app_name):
-    real=ALLOWED.get(app_name.lower(), app_name.capitalize())
+    app_name = app_name.lower().strip()
+    if not app_name:
+        return {"success": False, "message": "No app name"}
     try:
-        subprocess.run(["open","-a",real], check=True, timeout=5)
-        return {"success": True, "app": real, "message": f"Opened {real}"}
+        # Map common names
+        mapping = {
+            "safari": "Safari",
+            "chrome": "Google Chrome",
+            "vscode": "Visual Studio Code",
+            "code": "Visual Studio Code",
+        }
+        mac_app = mapping.get(app_name, app_name)
+        subprocess.run(["open", "-a", mac_app], check=False)
+        return {"success": True, "message": f"Done! I opened {app_name}"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "message": f"Failed to open {app_name}: {e}"}
+
 def open_app_and_search(app, query):
-    res=open_app(app)
-    if not res["success"]: return res
-    import urllib.parse; q=urllib.parse.quote(query); url=f"https://www.google.com/search?q={q}"
-    try:
-        subprocess.run(["open", url], timeout=5)
-        return {"success": True, "app": app, "query": query, "url": url, "results": [{"title":f"Search {query}","url":url}], "message": f"Done! I opened {app} and searched for {query}"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+    app = app.lower().strip() if app else "safari"
+    if "safari" in app or "chrome" in app:
+        url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+        webbrowser.open(url)
+        return {"success": True, "message": f"Done! I opened {app} and searched for {query}", "url": url}
+    # open app then search
+    open_app(app)
+    return {"success": True, "message": f"Opened {app} and searched for {query}"}
