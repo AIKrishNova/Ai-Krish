@@ -1,42 +1,32 @@
-"""Entry for the floating orb UI"""
+"""Floating assistant.  Run:  python -m assistant.ui   (add --demo to preview the animation)"""
 import sys
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
-from assistant.ui.main_window import MainWindow
-from assistant.ui.events import EventBus
 from assistant.ui.bridge import build_default
+from assistant.ui.events import EventBus
+from assistant.ui.main_window import SiriWindow
 
 def main():
     app = QApplication(sys.argv)
     bus = EventBus()
-    bridge_data = build_default(bus)
-    
-    # Handle both old dict return and new object return
-    if isinstance(bridge_data, dict):
-        handle_text = bridge_data.get("handle_text")
-        # create wrapper object with stop method for aboutToQuit
-        class BridgeWrapper:
-            def __init__(self, handle):
-                self.handle_text = handle
-                self.handle = handle
-            def stop(self):
-                print("[Bridge] stop called")
-            def __getitem__(self, key):
-                if key == "handle_text":
-                    return self.handle_text
-                return None
-        bridge = BridgeWrapper(handle_text)
-        # Store original handle for MainWindow
-        window = MainWindow(bus=bus, handle_text=handle_text)
+    bridge = build_default(bus)
+    window = SiriWindow(bus, bridge)
+    window.quit_requested.connect(app.quit)
+    app.aboutToQuit.connect(bridge.stop)
+    if "--demo" in sys.argv:
+        steps = [
+            (300, bus.wake_detected.emit),
+            (1200, bus.listening_started.emit),
+            (1300, lambda: [bus.audio_level.emit(v / 10.0) for v in (2, 5, 8, 6, 9)]),
+            (3000, bus.processing_started.emit),
+            (4500, bus.speaking_started.emit),
+            (6000, bus.speaking_finished.emit),
+            (6100, bus.task_completed.emit),
+        ]
+        for ms, fn in steps:
+            QTimer.singleShot(ms, fn)
     else:
-        bridge = bridge_data
-        window = MainWindow(bus=bus, handle_text=getattr(bridge, 'handle_text', None) or getattr(bridge, 'handle', None))
-
-    try:
-        app.aboutToQuit.connect(bridge.stop)
-    except Exception as e:
-        print(f"[WARN] Could not connect stop: {e}")
-    
-    window.show()
+        window.start_listening()
     sys.exit(app.exec())
 
 if __name__ == "__main__":

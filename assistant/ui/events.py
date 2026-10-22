@@ -28,5 +28,4 @@ class EventBus(QObject):
             self.state = new
             self.state_changed.emit(new)
 
-# Provide BUS instance for new brain code
 BUS = EventBus()
